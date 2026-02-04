@@ -1,0 +1,633 @@
+{
+    "name": "llm_agent",
+    "tags": [
+        "vento"
+    ],
+    "visibility": [],
+    "cards": [
+        {
+            "key": "action_1762627183357",
+            "width": 3,
+            "height": 18,
+            "icon": "globe",
+            "method": "post",
+            "name": "agent_input",
+            "graphOrder": 1000,
+            "description": "A job queue with a list of pending jobs and a current job",
+            "type": "action",
+            "editorOptions": {},
+            "displayResponse": true,
+            "params": {
+                "item": "",
+                "action": "action to perform in the queue: push, pop, clear",
+                "response": ""
+            },
+            "configParams": {
+                "item": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                },
+                "action": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                },
+                "response": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                }
+            },
+            "presets": {
+                "reply": {
+                    "description": "Sends a reply to the current job and makes the next item (if any) the current job. The reply should be specified in the response param",
+                    "configParams": {
+                        "action": {
+                            "visible": false,
+                            "defaultValue": "reply"
+                        },
+                        "item": {
+                            "visible": false
+                        },
+                        "response": {
+                            "visible": true
+                        }
+                    }
+                },
+                "skip": {
+                    "description": "Skips the current job. Do not use unless you know what you are doing.",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "skip"
+                        }
+                    }
+                },
+                "reset": {
+                    "description": "resets the queue state to empty and skip curret job",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "clear"
+                        }
+                    }
+                },
+                "remove": {
+                    "description": "remove the element with the given index from the job queue",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "remove"
+                        },
+                        "item": {
+                            "visible": true,
+                            "defaultValue": 0,
+                            "type": "number"
+                        }
+                    }
+                },
+                "push": {
+                    "params": {
+                        "item": "item to push"
+                    },
+                    "description": "Adds a new job",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "push"
+                        },
+                        "item": {
+                            "visible": true,
+                            "defaultValue": "",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "enableAgentInputMode": true,
+            "tokens": {},
+            "displayButton": false,
+            "manualAPIResponse": true,
+            "layer": "base",
+            "links": []
+        },
+        {
+            "key": "action_1762627353207",
+            "width": 2,
+            "height": 12,
+            "icon": "rocket",
+            "type": "action",
+            "name": "call_ai_provider",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "message": "prompt to send",
+                "provider": "chatgpt or lmstudio",
+                "model": "gpt model",
+                "requestId": "the id of the request to attend",
+                "conversation": "",
+                "files": "",
+                "images": "",
+                "log_ai_calls": "enable ai call logging",
+                "board": "source board name for logging",
+                "card": "source card name for logging"
+            },
+            "configParams": {
+                "message": {
+                    "visible": false,
+                    "defaultValue": "board.current_request.params.message",
+                    "type": "text"
+                },
+                "provider": {
+                    "visible": true,
+                    "defaultValue": "default",
+                    "type": "select",
+                    "data": [
+                        "default",
+                        "llama",
+                        "chatgpt",
+                        "lmstudio"
+                    ]
+                },
+                "model": {
+                    "visible": true,
+                    "defaultValue": "default",
+                    "type": "select",
+                    "dataFromField": "provider",
+                    "dataMap": {
+                        "default": [
+                            "default"
+                        ],
+                        "chatgpt": [
+                            "gpt-4.1",
+                            "gpt-4o",
+                            "gpt-4o-mini",
+                            "gpt-4-turbo",
+                            "gpt-3.5-turbo"
+                        ],
+                        "llama": [
+                            "gemma3-4b",
+                            "gemma3-12b",
+                            "gemma3-27b"
+                        ],
+                        "lmstudio": [
+                            "default"
+                        ]
+                    },
+                    "defaultValueMap": {
+                        "chatgpt": "gpt-4.1",
+                        "llama": "gemma3-12b",
+                        "lmstudio": "default"
+                    }
+                },
+                "requestId": {
+                    "visible": false,
+                    "defaultValue": "board.current_request.id",
+                    "type": "string"
+                },
+                "conversation": {
+                    "visible": true,
+                    "defaultValue": "board.current_request.params.conversation",
+                    "type": "any"
+                },
+                "files": {
+                    "visible": true,
+                    "defaultValue": "board.current_request.params.files",
+                    "type": "any"
+                },
+                "images": {
+                    "visible": true,
+                    "defaultValue": "board.current_request.params.images",
+                    "type": "any"
+                },
+                "log_ai_calls": {
+                    "visible": true,
+                    "defaultValue": "false",
+                    "type": "boolean"
+                },
+                "board": {
+                    "visible": false,
+                    "defaultValue": "board.current_request.params.board",
+                    "type": "string"
+                },
+                "card": {
+                    "visible": false,
+                    "defaultValue": "board.current_request.params.card",
+                    "type": "string"
+                }
+            },
+            "description": "Actions can perform tasks, automate processes, and enhance user interactions. It can also trigger other action-type cards on the board.\n\n  #### Key Features\n  - Run actions from rules.\n  - Chain/trigger other action cards.\n  - Parameterized execution.\n  - Customize parameters.\n  - Customize the card view (UI/render).",
+            "layer": "base",
+            "links": [],
+            "color": "var(--color7)",
+            "theme": "dark",
+            "domId": "9b16bda5-0757-4266-99cd-4ec5235068aa",
+            "cardState": {},
+            "editRulesInLowCode": false,
+            "editRulesInNaturalLanguage": false
+        },
+        {
+            "key": "action_1762627462167",
+            "width": 2,
+            "height": 7,
+            "icon": "rocket",
+            "type": "action",
+            "name": "current_request",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "input": "action input"
+            },
+            "configParams": {
+                "input": {
+                    "visible": false,
+                    "defaultValue": "board.agent_input.current",
+                    "type": "any"
+                }
+            },
+            "description": "Actions can perform tasks, automate processes, and enhance user interactions. It can also trigger other action-type cards on the board.\n\n  #### Key Features\n  - Run actions from rules.\n  - Chain/trigger other action cards.\n  - Parameterized execution.\n  - Customize parameters.\n  - Customize the card view (UI/render).",
+            "customName": "current_request",
+            "layer": "base",
+            "links": [
+                {
+                    "name": "call_ai_provider",
+                    "type": "post"
+                }
+            ]
+        },
+        {
+            "key": "action_1762627965286",
+            "width": 2,
+            "height": 7,
+            "icon": "rocket",
+            "type": "action",
+            "name": "reply",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "resquestId": "the id of the request to reply",
+                "response": "the response to send"
+            },
+            "configParams": {
+                "resquestId": {
+                    "visible": false,
+                    "defaultValue": "",
+                    "type": "any"
+                },
+                "response": {
+                    "visible": false,
+                    "defaultValue": "",
+                    "type": "string"
+                }
+            },
+            "description": "Actions can perform tasks, automate processes, and enhance user interactions. It can also trigger other action-type cards on the board.\n\n  #### Key Features\n  - Run actions from rules.\n  - Chain/trigger other action cards.\n  - Parameterized execution.\n  - Customize parameters.\n  - Customize the card view (UI/render).",
+            "customName": "reply",
+            "layer": "base",
+            "links": []
+        },
+        {
+            "key": "action_log_ai_call",
+            "width": 2,
+            "height": 8,
+            "description": "Writes AI prompt/output markdown logs to logs/ai_calls.",
+            "type": "action",
+            "method": "post",
+            "params": {
+                "model": "model name",
+                "files": "files",
+                "card": "card name",
+                "board": "board name",
+                "conversation": "conversation",
+                "images": "images",
+                "message": "prompt message",
+                "response": "response"
+            },
+            "icon": "file-text",
+            "displayResponse": true,
+            "name": "log_ai_call",
+            "configParams": {
+                "model": {
+                    "defaultValue": "",
+                    "type": "string",
+                    "visible": false
+                },
+                "files": {
+                    "defaultValue": "",
+                    "type": "any",
+                    "visible": false
+                },
+                "card": {
+                    "defaultValue": "",
+                    "type": "string",
+                    "visible": false
+                },
+                "board": {
+                    "defaultValue": "",
+                    "type": "string",
+                    "visible": false
+                },
+                "conversation": {
+                    "defaultValue": "",
+                    "type": "any",
+                    "visible": false
+                },
+                "images": {
+                    "defaultValue": "",
+                    "type": "any",
+                    "visible": false
+                },
+                "message": {
+                    "defaultValue": "",
+                    "type": "text",
+                    "visible": false
+                },
+                "response": {
+                    "defaultValue": "",
+                    "type": "any",
+                    "visible": false
+                }
+            },
+            "displayButton": true
+        }
+    ],
+    "autopilot": false,
+    "layouts": {
+        "lg": [
+            {
+                "w": 23,
+                "h": 28,
+                "x": 0,
+                "y": 0,
+                "i": "action_1762627183357",
+                "moved": false,
+                "static": false,
+                "isResizable": true,
+                "resizeHandles": [
+                    "n",
+                    "s",
+                    "e",
+                    "w",
+                    "ne",
+                    "nw",
+                    "se",
+                    "sw"
+                ]
+            },
+            {
+                "w": 25,
+                "h": 28,
+                "x": 45,
+                "y": 0,
+                "i": "action_1762627353207",
+                "moved": false,
+                "static": false,
+                "isResizable": true,
+                "resizeHandles": [
+                    "n",
+                    "s",
+                    "e",
+                    "w",
+                    "ne",
+                    "nw",
+                    "se",
+                    "sw"
+                ]
+            },
+            {
+                "w": 22,
+                "h": 28,
+                "x": 23,
+                "y": 0,
+                "i": "action_1762627462167",
+                "moved": false,
+                "static": false,
+                "isResizable": true,
+                "resizeHandles": [
+                    "n",
+                    "s",
+                    "e",
+                    "w",
+                    "ne",
+                    "nw",
+                    "se",
+                    "sw"
+                ]
+            },
+            {
+                "w": 20,
+                "h": 28,
+                "x": 70,
+                "y": 0,
+                "i": "action_1762627965286",
+                "moved": false,
+                "static": false,
+                "isResizable": true,
+                "resizeHandles": [
+                    "n",
+                    "s",
+                    "e",
+                    "w",
+                    "ne",
+                    "nw",
+                    "se",
+                    "sw"
+                ]
+            },
+            {
+                "i": "action_log_ai_call",
+                "x": 23,
+                "y": 27,
+                "w": 15,
+                "h": 9,
+                "isResizable": true
+            }
+        ],
+        "md": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 23,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 23,
+                "y": 27,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 38,
+                "y": 34,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 42,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_log_ai_call",
+                "x": 15,
+                "y": 49,
+                "w": 15,
+                "h": 9,
+                "isResizable": true
+            }
+        ],
+        "sm": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 2,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 0,
+                "y": 28,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 1,
+                "y": 35,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 43,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_log_ai_call",
+                "x": 1,
+                "y": 50,
+                "w": 1,
+                "h": 9,
+                "isResizable": true
+            }
+        ],
+        "xs": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 1,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 0,
+                "y": 28,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 0,
+                "y": 36,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 44,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_log_ai_call",
+                "x": 0,
+                "y": 52,
+                "w": 1,
+                "h": 9,
+                "isResizable": true
+            }
+        ]
+    },
+    "icon": "workflow",
+    "inputs": {
+        "default": "/api/agents/v1/llm_agent/agent_input"
+    },
+    "version": 1,
+    "savedAt": 1768920812679,
+    "rules": [
+        ""
+    ],
+    "graphLayout": {
+        "group-base": {
+            "x": 0,
+            "y": -176.0764643401379,
+            "width": 2771,
+            "height": 1570,
+            "layer": "base",
+            "type": "group"
+        },
+        "agent_input": {
+            "x": 100,
+            "y": 336.0764643401383,
+            "width": 600,
+            "height": 900,
+            "layer": "base",
+            "parent": "group-base",
+            "type": "node"
+        },
+        "call_ai_provider": {
+            "x": 1340,
+            "y": 336.0764643401383,
+            "width": 436,
+            "height": 902,
+            "layer": "base",
+            "parent": "group-base",
+            "type": "node"
+        },
+        "current_request": {
+            "x": 804.6458908398226,
+            "y": 556.3915516705895,
+            "width": 444,
+            "height": 462,
+            "layer": "base",
+            "parent": "group-base",
+            "type": "node"
+        },
+        "reply": {
+            "x": 2019.8328002917892,
+            "y": 160,
+            "width": 591,
+            "height": 714,
+            "layer": "base",
+            "parent": "group-base",
+            "type": "node"
+        },
+        "log_ai_call": {
+            "x": 2024.8652325836774,
+            "y": 976.7939032965037,
+            "width": 578,
+            "height": 452,
+            "parent": "group-base",
+            "type": "node"
+        }
+    },
+    "devices": []
+}

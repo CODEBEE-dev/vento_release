@@ -1,0 +1,193 @@
+{
+    "name": "{{{name}}}",
+    "icon": "openai",
+    "disabled": true,
+    "settings": {},
+    "layouts": {
+        "lg": [
+            {
+                "w": 41,
+                "h": 4,
+                "x": 36,
+                "y": 0,
+                "i": "value_1750261498829",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "w": 41,
+                "h": 23,
+                "x": 36,
+                "y": 4,
+                "i": "value_1752225293068",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "w": 36,
+                "h": 27,
+                "x": 0,
+                "y": 0,
+                "i": "action_1757089062959",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            }
+        ],
+        "md": [
+            {
+                "w": 26,
+                "h": 4,
+                "x": 37,
+                "y": 0,
+                "i": "value_1750261498829",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "w": 37,
+                "h": 24,
+                "x": 0,
+                "y": 0,
+                "i": "value_1752225293068",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "i": "action_1757089062959",
+                "x": 37,
+                "y": 23,
+                "w": 23,
+                "h": 14,
+                "isResizable": true
+            }
+        ],
+        "sm": [
+            {
+                "w": 2,
+                "h": 5,
+                "x": 0,
+                "y": 14,
+                "i": "value_1750261498829",
+                "moved": false,
+                "static": false
+            },
+            {
+                "w": 2,
+                "h": 14,
+                "x": 0,
+                "y": 0,
+                "i": "value_1752225293068",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "i": "action_1757089062959",
+                "x": 0,
+                "y": 19,
+                "w": 2,
+                "h": 14,
+                "isResizable": true
+            }
+        ],
+        "xs": [
+            {
+                "w": 1,
+                "h": 5,
+                "x": 0,
+                "y": 14,
+                "i": "value_1750261498829",
+                "moved": false,
+                "static": false
+            },
+            {
+                "w": 1,
+                "h": 14,
+                "x": 0,
+                "y": 0,
+                "i": "value_1752225293068",
+                "moved": false,
+                "static": false,
+                "isResizable": true
+            },
+            {
+                "i": "action_1757089062959",
+                "x": 0,
+                "y": 19,
+                "w": 1,
+                "h": 14,
+                "isResizable": true
+            }
+        ]
+    },
+    "cards": [
+        {
+            "key": "value_1750261498829",
+            "width": 4,
+            "height": 4,
+            "icon": "key",
+            "name": "Key Setter",
+            "description": "Displays a key setter for a specific key or in case already set displays key is set",
+            "type": "value",
+            "params": {
+                "nameKey": "The key name to set"
+            },
+            "configParams": {
+                "nameKey": {
+                    "visible": true,
+                    "defaultValue": "OPENAI_API_KEY"
+                }
+            },
+            "rulesCode": "",
+            "html": "\n//@react\nreactCard(`\n  async function validateKey(apiKey) {\n   // return true or false if the key is valid or not\n    return true;\n  }\n\n  function Widget() {\n    return (\n          <View className=\"no-drag\">\n            <KeySetter\n              nameKey={data?.configParams?.nameKey?.defaultValue}\n              validate={validateKey}\n              onAdd={(key) => {\n                settings.set('ai.enabled', true)\n              }}\n              onRemove={(key) => {\n                settings.del('ai.enabled')\n              }}\n            />\n          </View>\n    );\n  }\n\n`, data.domId)\n\n            "
+        },
+        {
+            "key": "value_1752225293068",
+            "width": 3,
+            "height": 12,
+            "icon": "file-text",
+            "name": "Read Me",
+            "description": "Render formatted markdown using ReactMarkdown",
+            "type": "value",
+            "editorOptions": {},
+            "displayFrame": true,
+            "rulesCode": "return `# 🧠 ChatGPT Interaction Board\n\nThis board lets you chat with ChatGPT using the OpenAI API.Follow these simple steps to get started:\n\n## 🔑 Step 1: Get Your API Key\n\n1. Go to[OpenAI's API Keys page](https://platform.openai.com/account/api-keys).\n2. Log in and click ** \"Create new secret key\" **.\n3. Copy and save your key securely — it won't be shown again.\n\n    > ⚠️ ** Keep it secret! ** Your API key is private and usage - based.\n\n## 🔑 Step 2: Set Your API Key\n\n1. Add your key on Key Setter card and click \"+\" to add. \n\n## 💬 Step 3: Chat with ChatGPT\n\n- Enter your message in the ** input box **.\n- Click the ** \"Send\" ** button to interact.\n- You’ll receive a response from ChatGPT below.\n\nStart chatting now and build your own AI assistant! 🚀\n`",
+            "html": "//@react\nreturn markdown(data)"
+        },
+        {
+            "key": "action_1757089062959",
+            "width": 3,
+            "height": 12,
+            "icon": "sparkles",
+            "type": "action",
+            "name": "AI card",
+            "displayResponse": true,
+            "params": {
+                "prompt": ""
+            },
+            "configParams": {
+                "prompt": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "text"
+                }
+            },
+            "displayIcon": false,
+            "displayButton": true,
+            "displayButtonIcon": true,
+            "rulesCode": "const response = await context.chatgpt.prompt({\n  message: `\n<instructions>You are integrated into a board system.\nThe board is composed of states and actions.\nYou will receive a user message and your mission is to generate a json response.\nOnly respond with a JSON in the following format:\n\n{\n    \"response\": \"whatever you want to say\",\n    \"actions\": [\n        {\n            \"name\": \"action_1\",\n            \"params\": {\n                \"example_param\": \"example_value\"\n            } \n        }\n    ]\n}\n\nThe key response will be shown to the user as a response to the user prompt.\nThe actions array can be empty if the user prompt requires no actions to be executed.\nWhen executing an action, always use the action name. Never use the action id to execute actions, just the name. \n\n</instructions>\n<board_actions>\n${JSON.stringify(boardActions)}\n</board_action>\n<board_states>\n${JSON.stringify(board)}\n</board_states>\n\nThe user prompt is:\n\n${params.prompt}\n`,\n  conversation: await context.chatgpt.getSystemPrompt({\n    prompt: `You can analyze images provided in the same user turn. \nDo NOT claim you cannot see images. \nAnswer following the JSON contract only (no code fences).`,\n  }),\n  images: await context.boards.getStatesByType({\n    board: board,\n    type: \"frame\",\n    key: \"frame\",\n  }),\n  files: await context.boards.getStatesByType({\n    board: board,\n    type: \"file\",\n    key: \"path\",\n  }),\n});\n\nreturn context.chatgpt.processResponse({\n  response: response,\n  execute_action: execute_action,\n});\n",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1}  mt={\"20px\"} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        }
+    ],
+    "autopilot": false,
+    "rules": [],
+    "version": 3,
+    "displayName": "chat gpt",
+    "boardCode": "const { boardConnect } = require('protonode')\r\nconst { Protofy } = require('protobase')\r\n\r\nconst run = Protofy(\"code\", async ({ context, states, board }) => {\r\n\r\n})\r\n\r\nboardConnect(run)",
+    "boardUI": "//@card/react\r\n//board is the board object\r\n//state is the state of the board\r\n\r\nfunction Widget({ board, state, ...props }) {\r\n    const messagesEndRef = React.useRef(null)\r\n    const [text, setText] = React.useState(\"\")\r\n    const [loading, setLoading] = React.useState(false)\r\n    const [chatMessages, setChatMessages] = React.useState([])\r\n\r\n    const filteredMessages = chatMessages.filter(cm => cm.message)\r\n\r\n    const addMessage = (from, message) => {\r\n        setChatMessages([...chatMessages, {\r\n            from: from,\r\n            message: message\r\n        }])\r\n\r\n        setTimeout(() => {\r\n            messagesEndRef.current?.scrollIntoView({ behavior: \"smooth\" });\r\n        }, 0);\r\n    }\r\n\r\n    const onSendMessage = () => {\r\n        addMessage(\"user\", text)\r\n        execute_action(\"Send message\", { message: text })\r\n        setText(\"\")\r\n        setLoading(true)\r\n    }\r\n\r\n    React.useEffect(() => {\r\n        addMessage(\"chat\", state[\"Message response\"])\r\n        setLoading(false)\r\n    }, [state[\"Message response\"]])\r\n\r\n\r\n    return <YStack h={\"calc(100vh - 60px)\"} ai=\"center\" f={1} pb=\"10px\">\r\n        <YStack gap=\"$3\" f={1} w=\"100%\" maw=\"770px\" h=\"100%\">\r\n            <YStack f={1} gap=\"$3\" width=\"100%\" overflow=\"scroll\" overflowX=\"hidden\">\r\n                {\r\n                    filteredMessages?.map((cm, i) => {\r\n                        const isUser = cm.from == \"user\"\r\n                        return <YStack\r\n                            als={isUser ? \"flex-end\" : \"flex-start\"}\r\n                            bc={isUser ? \"$bgPanel\" : \"transparent\"}\r\n                            p=\"$2\"\r\n                            px=\"$3\"\r\n                            br=\"$8\"\r\n                        >\r\n                            <Text key={i} fontSize=\"$5\">{cm[\"message\"]}</Text>\r\n                        </YStack>\r\n                    })\r\n                }\r\n                <YStack ref={messagesEndRef}>\r\n                    {loading && <YStack ai=\"flex-start\" p=\"$2\">\r\n                        <Spinner size={20} color=\"$color10\" />\r\n                    </YStack>}\r\n                </YStack>\r\n            </YStack>\r\n            <XStack gap=\"$5\" width=\"100%\">\r\n                <XStack f={1} gap=\"$2\">\r\n                    <Input\r\n                        placeholder=\"Message ChatGPT...\"\r\n                        width=\"200px\"\r\n                        f={1}\r\n                        bc=\"$bgPanel\"\r\n                        value={text}\r\n                        br=\"$20\"\r\n                        onChangeText={t => {\r\n                            setText(t)\r\n                        }}\r\n                        onSubmitEditing={e => {\r\n                            onSendMessage()\r\n                        }}\r\n                    />\r\n                </XStack>\r\n            </XStack>\r\n        </YStack>\r\n    </YStack>\r\n}\r\n\r\n\r\n"
+}

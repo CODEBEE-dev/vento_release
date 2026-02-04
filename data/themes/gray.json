@@ -1,0 +1,21 @@
+{
+    "name": "gray",
+    "format": [
+        "json",
+        "css"
+    ],
+    "config": {
+        "themes": {
+            "light": {
+                "bgPanel": "#FFFFFF",
+                "bgContent": "#F8F8F8"
+            },
+            "dark": {
+                "color8": "#dddddd",
+                "bgPanel": "hsl(0, 0%, 17%)",
+                "bgContent": "hsl(15, 0%, 11%)"
+            }
+        }
+    },
+    "accent": "gray"
+}

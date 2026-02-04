@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",                 // Define ECMAScript target version
+    "module": "nodenext",              // Specify module code generation: 'commonjs' for Node.js apps
+    "moduleResolution": "nodenext",        // Resolve modules using Node.js-style module resolution
+    "strict": false,                    // Enable all strict type-checking options
+    "esModuleInterop": true,           // Allows default imports from modules with no default export
+    "skipLibCheck": true,              // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true, // Disallow inconsistently-cased references to the same file
+    "resolveJsonModule": true,         // Allows importing .json files
+    "outDir": "./dist",                // Redirect output structure to the directory
+    "baseUrl": "../../packages",
+    "removeComments": true,            // Remove comments from the output files
+    // "moduleResolution": "node",
+    "typeRoots": [                     // Specifies a list of directories for type definitions
+      "./node_modules/@types",
+      "../../node_modules/@types"
+    ],
+    "lib": [                           // List of library files to be included in the compilation
+      "es6",
+      "dom",
+      "esnext.asynciterable"
+    ],
+
+    "paths": {
+      "protolib/*": ["protolib/*"],
+      "app/*": ["app/*"],
+      "@my/config": ["config"],
+      "@extensions/*": ["../extensions/*"],
+      "@generated/*": ["../apps/vento/src/generated/*"]
+    }
+  },
+  "include": [
+    "./src/**/*.ts",
+    "../../.types/*.ts",
+    "./app/bundles/context.ts",
+    "./app/bundles/coreContext.ts",
+    "./app/bundles/coreApis.ts",
+    "./app/bundles/apis.ts",
+    "./app/bundles/storageProviders.ts",
+    "./app/bundles/stateMachines.ts",
+    "./app/conf.ts",
+    "./app/initialData.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

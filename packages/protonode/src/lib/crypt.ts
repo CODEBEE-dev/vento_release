@@ -1,0 +1,1 @@
+export { hash, checkPassword, genToken, verifyToken } from 'protobase';

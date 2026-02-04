@@ -1,0 +1,1588 @@
+import { API, hasPermission, checkPermission } from "protobase";
+import { DevicesModel } from ".";
+import { AutoAPI, handler, getServiceToken, getDeviceToken,getRoot } from 'protonode'
+import { getLogger, generateEvent, ProtoMemDB } from 'protobase';
+import * as fs from 'fs';
+import { promises as promisesFs } from 'fs';
+import * as fspath from 'path';
+import { addAction } from "@extensions/actions/coreContext/addAction";
+import { addCard } from "@extensions/cards/coreContext/addCard";
+import { removeActions } from "@extensions/actions/coreContext/removeActions";
+import { ensureEsphomeYamlConfigFile } from "@extensions/esphome/coreApis";
+import { gridSizes as GRID } from 'protobase';
+import { compileMessagesTopic } from "@extensions/esphome/utils";
+import { connect as mqttConnect, IClientOptions } from 'mqtt';
+import protoInfraUrls from "@extensions/protoinfra/utils/protoInfraUrls";
+import { randomUUID } from 'crypto';
+import { getTemplate, TemplatesDir } from "@extensions/boards/system/boards";
+import { buildCardLabel, buildCardTemplateName } from "./cardLabeling";
+
+const PER_PARAM_ROWS = 1; // tweak as needed (extra grid rows per visible param)
+
+const computeCardSize = (paramsObj?: Record<string, any>) => {
+    const baseWidth = 2
+    const baseHeight = 6
+    const paramCount = Object.keys(paramsObj ?? {}).length;
+
+    const width = baseWidth;
+    const height = baseHeight + paramCount * PER_PARAM_ROWS;
+
+    return { width, height };
+};
+
+// Accepts the stored card object so we can inspect src.id and defaults.name
+const inferSubsystemFromId = (
+    idOrName: string,                // what you're currently looping (e.g., 'leds_red')
+    deviceName: string,
+    src?: any                        // the stored card object
+) => {
+    const storedId: string | undefined = src?.id;              // where addCard's id should be
+    const humanName: string | undefined = src?.defaults?.name; // e.g. 'asas leds red'
+
+    //   console.log('[inferSubsystemFromId] INPUT', { idOrName, deviceName, storedId, humanName });
+
+    // 1) Prefer the true stored ID if present (full prefix format)
+    const pick = storedId || idOrName;
+
+    // Fast-paths for full IDs
+    const monPrefix = `devices_monitors_${deviceName}_`;
+    if (pick.startsWith(monPrefix)) {
+        const rest = pick.slice(monPrefix.length);
+        // console.log('[inferSubsystemFromId] monitors fast-path', { pick, rest });
+        return rest || 'misc';
+    }
+
+    const actPrefix = `devices_${deviceName}_`;
+    if (pick.startsWith(actPrefix)) {
+        const rest = pick.slice(actPrefix.length); // <subsystem>_<action...> OR just <subsystem>
+        const firstUnderscore = rest.indexOf('_');
+        const subsys = firstUnderscore >= 0 ? rest.slice(0, firstUnderscore) : rest;
+        // console.log('[inferSubsystemFromId] actions fast-path', { pick, rest, subsys });
+        if (subsys) return subsys;
+    }
+
+    // 2) Short-key heuristic (what your API is returning: 'leds_red', 'leds_off', etc.)
+    //    Take the segment before the first underscore if it exists and is non-empty.
+    if (idOrName.includes('_')) {
+        const subsys = idOrName.split('_')[0] || '';
+        if (subsys) {
+            //   console.log('[inferSubsystemFromId] short-key heuristic', { idOrName, subsys });
+            return subsys;
+        }
+    }
+
+    // 3) Try to infer from defaults.name: usually "<deviceName> <subsystem> ..."
+    if (humanName) {
+        const prefix = `${deviceName} `;
+        let tail = humanName.startsWith(prefix) ? humanName.slice(prefix.length) : humanName;
+        // Split by space or underscore and grab first token that isn’t empty.
+        const token = (tail.split(/[\s_]+/).find(Boolean) || '').trim();
+        if (token) {
+            //   console.log('[inferSubsystemFromId] humanName heuristic', { humanName, token });
+            return token;
+        }
+    }
+
+    // 4) Last fallback
+    //   console.log('[inferSubsystemFromId] fallback -> misc', { idOrName, deviceName });
+    return 'misc';
+};
+
+
+
+// Pack items left→right and wrap
+const pack = (items: Array<{ i: string; w: number; h: number }>, cols: number) => {
+    const out: any[] = [];
+    let x = 0, y = 0, rowH = 0;
+    for (const it of items) {
+        const w = Math.min(it.w, cols);
+        if (x + w > cols) { x = 0; y += rowH; rowH = 0; }
+        out.push({ i: it.i, x, y, w, h: it.h, isResizable: true });
+        x += w; rowH = Math.max(rowH, it.h);
+    }
+    return out;
+};
+
+// Shift a layout vertically by offsetY
+const shiftY = (layout: any[], offsetY: number) =>
+    layout.map(l => ({ ...l, y: l.y + offsetY }));
+
+// Compute total height of a packed section (max y+h)
+const sectionHeight = (layout: any[]) =>
+    layout.reduce((m, l) => Math.max(m, l.y + l.h), 0);
+
+// Tamaños dinámicos basados en el grid: 6 tarjetas por fila
+const CARDS_PER_ROW = 6;
+const SIZE = {
+    value: {
+        lg: { w: Math.floor(GRID.lg.totalCols / CARDS_PER_ROW), h: GRID.lg.normalH },
+        md: { w: Math.floor(GRID.md.totalCols / CARDS_PER_ROW), h: GRID.md.normalH },
+        sm: { w: GRID.sm.normalW, h: GRID.sm.normalH },
+        xs: { w: GRID.xs.normalW, h: GRID.xs.normalH },
+    },
+    action: {
+        lg: { w: Math.floor(GRID.lg.totalCols / CARDS_PER_ROW), h: GRID.lg.normalH + 4 },
+        md: { w: Math.floor(GRID.md.totalCols / CARDS_PER_ROW), h: GRID.md.normalH + 4 },
+        sm: { w: GRID.sm.normalW, h: GRID.sm.normalH + 4 },
+        xs: { w: GRID.xs.normalW, h: GRID.xs.normalH + 4 },
+    },
+};
+
+const buildSubsystemsCardHtml = (device: string) => `//@card/react
+function Widget(card) {
+  const [subsystems, setSubsystems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    let active = true;
+    const loadSubsystems = async () => {
+      setLoading(true);
+      try {
+        const resp = await fetch('/api/core/v1/devices/${device}');
+        if (!resp.ok) throw new Error('Request failed (' + resp.status + ')');
+        const data = await resp.json().catch(() => ({}));
+        if (!active) return;
+        setSubsystems(data?.subsystem || []);
+        setError(null);
+      } catch (err) {
+        if (!active) return;
+        setError(err?.message || 'Failed to load subsystems');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadSubsystems();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); }}
+      onMouseDown={(e) => { e.stopPropagation(); }}
+      onPointerDown={(e) => { e.stopPropagation(); }}
+      style={{ height: '100%' }}
+    >
+      <Tinted>
+        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>
+          <YStack f={1} width="100%" height="100%" gap="$3" padding="$3" overflow="auto">
+            <XStack ai="center" gap="$2">
+              {card.icon && <Icon name={card.icon} size={24} color={card.color} />}
+              <Text fontWeight="700">{card.label || card.name || 'Subsystems'}</Text>
+            </XStack>
+            {loading ? (
+              <YStack f={1} ai="center" jc="center">
+                <Spinner size="large" />
+              </YStack>
+            ) : error ? (
+              <Text color="$red10" size="$2">Failed to load subsystems: {error}</Text>
+            ) : (
+              <Subsystems subsystems={subsystems} deviceName="${device}" />
+            )}
+          </YStack>
+        </ProtoThemeProvider>
+      </Tinted>
+    </div>
+  );
+}
+`;
+
+// --- Smarter board generator: groups by subsystem, uses gridSizes totals ---
+const generateDeviceBoard = async (
+  boardName: string = 'devices_all',
+  deviceName?: string
+) => {
+    const token = getServiceToken();
+    
+    // Check if board already exists
+    let existingBoardData: any = null;
+    try {
+        const existingBoard = await API.get(`/api/core/v1/boards/${encodeURIComponent(boardName)}?token=${token}`);
+        if (existingBoard?.data) {
+            if (!deviceName) {
+                logger.debug({ boardName }, 'Board already exists, skipping generation (delete board manually to regenerate)');
+                return;
+            }
+            existingBoardData = existingBoard.data;
+        }
+    } catch (e: any) {
+        // 404 means board doesn't exist - continue with generation
+        const status = e?.response?.status || e?.status;
+        if (status !== 404) {
+            logger.warn({ boardName, err: e?.response?.data || e }, 'Error checking board existence');
+        }
+    }
+
+    const DEFAULT_HTML_VALUE = `//@card/react
+function Widget(card) {
+  const value = card.value;
+  const displayValue = (() => {
+    const hasUnits = card.units && (typeof value === 'number' || typeof value === 'string');
+    if (hasUnits) return value + " " + card.units;
+    return value ?? "N/A";
+  })();
+  return (
+    <Tinted>
+      <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>
+        <YStack f={1} height="100%" ai="center" jc="center" width="100%">
+          {card.icon && card.displayIcon !== false && (
+            <Icon name={card.icon} size={48} color={card.color}/>
+          )}
+          {card.displayResponse !== false && (
+            <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={displayValue} />
+          )}
+        </YStack>
+      </ProtoThemeProvider>
+    </Tinted>
+  );
+}
+`;
+
+    const DEFAULT_HTML_ACTION = `//@card/react
+function Widget(card) {
+  const value = card.value;
+  const content = <YStack f={1} ai="center" jc="center" width="100%">
+    {card.icon && card.displayIcon !== false && (
+      <Icon name={card.icon} size={48} color={card.color}/>
+    )}
+    {card.displayResponse !== false && (
+      <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? "N/A"} />
+    )}
+  </YStack>
+  return (
+    <Tinted>
+      <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>
+        <ActionCard data={card}>
+          {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}
+        </ActionCard>
+      </ProtoThemeProvider>
+    </Tinted>
+  );
+}
+`;
+
+    const makeKey = (s: string, kind: 'value' | 'action') =>
+        `${kind}_${s.replace(/[^a-z0-9_]+/gi, '_').toLowerCase()}`;
+
+    try {
+        const cards: any[] = [];
+        type Sized = { i: string; w: number; h: number; id: string; device: string; subsystem: string; order?: number; };
+        const buckets = {
+            lg: new Map<string, Sized[]>(),
+            md: new Map<string, Sized[]>(),
+            sm: new Map<string, Sized[]>(),
+            xs: new Map<string, Sized[]>(),
+        };
+        const ensureBucket = (bp: 'lg' | 'md' | 'sm' | 'xs', key: string) => {
+            if (!buckets[bp].has(key)) buckets[bp].set(key, []);
+            return buckets[bp].get(key)!;
+        };
+
+        const treeResp = await API.get(`/api/core/v1/cards?token=${token}`);
+        const cardsArray = Array.isArray(treeResp?.data?.items) ? treeResp.data.items : [];
+        const deviceCardsArray = cardsArray.filter((card: any) => card?.group === 'devices');
+
+        const devicesMap = new Map<string, any[]>();
+        for (const card of deviceCardsArray) {
+            const tag = card?.tag || 'unknown';
+            if (!devicesMap.has(tag)) {
+                devicesMap.set(tag, []);
+            }
+            devicesMap.get(tag)!.push(card);
+        }
+
+
+        const deviceEntries = deviceName
+            ? (devicesMap.has(deviceName) ? [[deviceName, devicesMap.get(deviceName)!]] : [])
+            : Array.from(devicesMap.entries());
+
+
+        for (const [deviceName, deviceCards] of deviceEntries) {
+            for (const cardEntry of deviceCards) {
+                const id = cardEntry?.name ?? cardEntry?.id ?? cardEntry?.key;
+                const storedId = cardEntry?.id ?? '';
+                if (!id || id === 'devices_table') continue;
+                // Skip subsystem overview cards so they remain available in the cards list
+                // but are not auto-added to generated boards.
+                if (id.includes('subsystems_overview') || storedId.includes('subsystems_overview')) continue;
+                const src = cardEntry || {};
+                const d = src.defaults || {};
+
+                const type: 'value' | 'action' = (d.type === 'action') ? 'action' : 'value';
+
+                // Use label from card defaults if available, otherwise format the id
+                const humanName = d.label || id
+                    .replace(/_/g, ' ')
+                    .replace(/\b\w/g, c => c.toUpperCase());
+                const key = makeKey(`${deviceName}__${id}`, type);
+                const size = SIZE[type];
+
+                const card: any = {
+                    key,
+                    name: humanName,
+                    type: d.type || 'value',
+                    icon: d.icon || '',
+                    description: d.description || '',
+                    width: d.width,
+                    height: d.height,
+                };
+
+                if ('rulesCode' in d) card.rulesCode = d.rulesCode;
+                if ('params' in d) card.params = d.params;
+                if ('configParams' in d) card.configParams = d.configParams;
+                if ('method' in d) card.method = d.method;
+                if ('persistValue' in d) card.persistValue = d.persistValue;
+                if ('buttonMode' in d) card.buttonMode = d.buttonMode;
+                if ('buttonLabel' in d) card.buttonLabel = d.buttonLabel;
+                if ('displayButton' in d) card.displayButton = d.displayButton;
+                if ('displayButtonIcon' in d) card.displayButtonIcon = d.displayButtonIcon;
+                if ('displayIcon' in d) card.displayIcon = d.displayIcon;
+                if ('displayResponse' in d) card.displayResponse = d.displayResponse;
+                if ('html' in d && d.html) card.html = d.html;
+                if ('color' in d) card.color = d.color;
+                if ('units' in d) card.units = d.units;
+
+                if (!card.html) {
+                    card.html = (type === 'action') ? DEFAULT_HTML_ACTION : DEFAULT_HTML_VALUE;
+                }
+
+                cards.push(card);
+
+                const subsystem = inferSubsystemFromId(id, deviceName, src);
+                if (subsystem === 'misc') {
+                    console.log('🤖 ~ generateDeviceBoard ~ subsystem: misc', { deviceName, id, storedId: src?.id, humanName: d?.name });
+                }
+                const groupKey = `${deviceName}::${subsystem}`;
+                const orderValue = d.order;
+                // push sizes per breakpoint
+                ensureBucket('lg', groupKey).push({ i: key, w: size.lg.w, h: size.lg.h, id, device: deviceName, subsystem, order: orderValue });
+                ensureBucket('md', groupKey).push({ i: key, w: size.md.w, h: size.md.h, id, device: deviceName, subsystem, order: orderValue });
+                ensureBucket('sm', groupKey).push({ i: key, w: size.sm.w, h: size.sm.h, id, device: deviceName, subsystem, order: orderValue });
+                ensureBucket('xs', groupKey).push({ i: key, w: size.xs.w, h: size.xs.h, id, device: deviceName, subsystem, order: orderValue });
+            }
+        }
+
+        // Load AI agent template with card code/html using getTemplate
+        try {
+            const aiTemplateJson = await getTemplate('smart ai agent');
+            for (const card of aiTemplateJson.cards || []) {
+                cards.push(card);
+            }
+        } catch (err) {
+            logger.warn({ err }, 'Failed to load smart ai agent template for device board');
+        }
+
+        // --- after you've finished filling `buckets` (lg/md/sm/xs) ---
+        // Calculate the minimum order for each group (for sorting groups by their first card's order)
+        const groupMinOrder = new Map<string, number>();
+
+        // Use lg bucket as canonical — membership is identical across breakpoints
+        for (const [gk, items] of buckets.lg.entries()) {
+            const minOrder = Math.min(...items.map(it => it.order ?? Infinity));
+            groupMinOrder.set(gk, minOrder);
+        }
+
+        // Pretty log of all group orders once
+        console.groupCollapsed('[devices_board] Subsystem minOrder');
+        for (const [gk, minOrder] of groupMinOrder.entries()) {
+            const [device, subsystem] = gk.split('::');
+            console.log(`- ${device} :: ${subsystem} -> minOrder=${minOrder}`);
+        }
+        console.groupEnd();
+
+        // helper: shift both axes
+        const shiftXY = (layout: any[], dx: number, dy: number) =>
+            layout.map(l => ({ ...l, x: l.x + dx, y: l.y + dy }));
+
+        // compute width (in cols) a local packed group actually uses
+        const groupWidth = (layout: any[]) =>
+            layout.reduce((m, l) => Math.max(m, l.x + l.w), 0);
+
+        // --- after computing groupMinOrder + the order log ---
+        const buildGroupedLayout = (bp: 'lg' | 'md' | 'sm' | 'xs', cols: number) => {
+            // Collect ALL cards from all groups, then sort by order globally
+            const allItems: Sized[] = [];
+            for (const [gk, items] of buckets[bp].entries()) {
+                allItems.push(...items);
+            }
+            
+            // Sort all cards by their order value (cards without order go last)
+            const sortedItems = allItems.sort((a, b) => {
+                const orderA = a.order ?? Infinity;
+                const orderB = b.order ?? Infinity;
+                return orderA - orderB;
+            });
+
+            // log final order
+            console.groupCollapsed(`[devices_board] Card order @ ${bp} (cols=${cols})`);
+            sortedItems.slice(0, 20).forEach((item, i) => {
+                console.log(`${i + 1}. ${item.i} (order=${item.order ?? 'none'})`);
+            });
+            if (sortedItems.length > 20) console.log(`... and ${sortedItems.length - 20} more`);
+            console.groupEnd();
+
+            // Simple row-based layout: place cards one by one, wrapping to next row when needed
+            let curX = 0;
+            let curY = 0;
+            let rowH = 0;
+            const result: any[] = [];
+
+            for (const item of sortedItems) {
+                const w = item.w;
+                const h = item.h;
+
+                // If card doesn't fit in remaining space, wrap to next row
+                if (curX + w > cols) {
+                    curX = 0;
+                    curY += rowH + 1; // +1 row spacer
+                    rowH = 0;
+                }
+
+                // Place this card
+                result.push({
+                    i: item.i,
+                    x: curX,
+                    y: curY,
+                    w: w,
+                    h: h,
+                    isResizable: true,
+                });
+
+                // Advance cursor
+                curX += w;
+                rowH = Math.max(rowH, h);
+            }
+
+            return result;
+        };
+
+
+        const layouts = {
+            lg: buildGroupedLayout('lg', GRID.lg.totalCols),
+            md: buildGroupedLayout('md', GRID.md.totalCols),
+            sm: buildGroupedLayout('sm', GRID.sm.totalCols),
+            xs: buildGroupedLayout('xs', GRID.xs.totalCols),
+        };
+        const emptyLayouts = {
+            lg: [],
+            md: [],
+            sm: [],
+            xs: [],
+        }
+
+        // Helper to compare board content - only checks if same cards exist (by key)
+        const boardContentEqual = (existing: any, newCards: any[]): boolean => {
+            if (!existing) return false;
+            try {
+                const existingKeys = new Set((existing.cards || []).map((c: any) => c.key).filter(Boolean));
+                const newKeys = new Set(newCards.map((c: any) => c.key).filter(Boolean));
+
+                // Check if same set of card keys
+                if (existingKeys.size !== newKeys.size) {
+                    logger.debug({ boardName, existingCount: existingKeys.size, newCount: newKeys.size }, 'Board card count differs');
+                    return false;
+                }
+
+                for (const key of newKeys) {
+                    if (!existingKeys.has(key)) {
+                        logger.debug({ boardName, missingKey: key }, 'Board missing card key');
+                        return false;
+                    }
+                }
+
+                return true;
+            } catch (err) {
+                logger.debug({ boardName, err }, 'Error comparing board content');
+                return false;
+            }
+        };
+
+        // Check if content has changed (only comparing card keys)
+        const contentUnchanged = boardContentEqual(existingBoardData, cards);
+
+        if (contentUnchanged) {
+            logger.debug({ boardName }, 'Board content unchanged, skipping version increment');
+            return;
+        }
+
+        const nextVersion = existingBoardData?.version != null
+            ? Number(existingBoardData.version) + 1
+            : 0;
+        const payload = {
+            name: boardName,
+            version: nextVersion,
+            layouts,
+            cards,
+            rules: [],
+            network: "core",
+            tags: ["network"],
+            autopilot: false,
+            icon: 'router',
+            userPermissions: 'r',
+            savedAt: Date.now(),
+            ...(deviceName ? { associated_device: deviceName } : {})
+        };
+
+        if (existingBoardData) {
+            await API.post(`/api/core/v1/boards/${encodeURIComponent(boardName)}?token=${token}`, payload);
+            logger.info({ boardName, count: cards.length, version: nextVersion }, 'Updated devices board with grouped subsystem layouts');
+        } else {
+            await API.post(`/api/core/v1/boards?token=${token}`, payload);
+            logger.info({ boardName, count: cards.length, version: nextVersion }, 'Generated devices board with grouped subsystem layouts');
+        }
+    } catch (err) {
+        logger.error({ err }, 'Failed to generate devices board');
+    }
+};
+
+const deleteDeviceCards = async (deviceName: string) => {
+    try {
+        const token = getServiceToken();
+        // fetch cards list (AutoAPI returns a paginated list with items)
+        const cardsTree = await API.get(`/api/core/v1/cards?token=${token}`);
+        const items = cardsTree?.data?.items || cardsTree?.items || [];
+        const deviceCards = items.filter((card: any) => card?.group === 'devices' && card?.tag === deviceName);
+        const ids = deviceCards.map((c: any) => c?.id).filter(Boolean);
+
+        if (ids.length) {
+            // POST-based delete per card: /api/core/v1/cards/:group/:tag/:name/delete
+            // Also clear from ProtoMemDB cache
+            await Promise.all(
+                ids.map(async (cardId) => {
+                    try {
+                        const [grp, tg, nm] = String(cardId).split('.');
+                        const cardName = nm || cardId;
+                        const groupName = grp || 'devices';
+                        const tagName = tg || deviceName;
+
+                        // Clear from in-memory cache
+                        ProtoMemDB('cards').remove(groupName, tagName, cardName);
+                        // Delete from disk via API (AutoAPI delete uses the card id path)
+                        await API.get(
+                            `/api/core/v1/cards/${encodeURIComponent(cardId)}/delete?token=${token}`
+                        );
+                    } catch (err) {
+                        logger.error({ deviceName, cardId, err }, 'Failed deleting device card');
+                    }
+                })
+            );
+            logger.info({ deviceName, count: ids.length }, 'Deleted device cards via API and cache');
+        }
+
+        // Also directly delete the cards folder from disk to ensure no stale files remain
+        const cardsDir = fspath.join(process.cwd(), 'data', 'cards', 'devices', deviceName);
+        if (fs.existsSync(cardsDir)) {
+            fs.rmSync(cardsDir, { recursive: true, force: true });
+            logger.info({ deviceName, cardsDir }, 'Deleted device cards folder from disk');
+        }
+    } catch (err) {
+        logger.error({ err }, 'Failed deleting cards for device');
+    }
+};
+const deleteDeviceActions = async (deviceName: string) => {
+    try {
+        // remove actions (ProtoMemDB 'actions' chunk) + emit delete events
+        await removeActions({
+            chunk: 'actions',
+            group: 'devices',
+            tag: deviceName,
+        });
+        logger.info({ deviceName }, 'Deleted device actions');
+
+        // also remove all cards belonging to this device
+        await deleteDeviceCards(deviceName);
+    } catch (err) {
+        logger.error({ deviceName, err }, 'Failed deleting actions/cards for device');
+    }
+};
+
+const dataDir = (root) => fspath.join(root, "/data/devices/")
+
+
+const getDB = (path, req, session) => {
+    const db = {
+        async *iterator() {
+            // console.log("Iterator")
+            try {
+                await promisesFs.access(dataDir(getRoot(req)), promisesFs.constants.F_OK)
+            } catch (error) {
+                console.log("Creating deviceDefinitions folder")
+                await promisesFs.mkdir(dataDir(getRoot(req)))
+            }
+            const files = (await promisesFs.readdir(dataDir(getRoot(req)))).filter(f => {
+                const filenameSegments = f.split('.')
+                return !fs.lstatSync(fspath.join(dataDir(getRoot(req)), f)).isDirectory() && (filenameSegments[filenameSegments.length - 1] === "json")
+            })
+            // console.log("Files: ", files)
+            for (const file of files) {
+                //read file content
+                const fileContent = await promisesFs.readFile(dataDir(getRoot(req)) + file, 'utf8')
+                yield [file.name, fileContent];
+            }
+        },
+
+        async del(key, value) {
+            console.log("Deleting key: ", JSON.stringify({key,value}))
+            const filePath = dataDir(getRoot(req)) + key + ".json"
+            try {
+                await promisesFs.unlink(filePath)
+            } catch (error) {
+                console.log("Error deleting file: " + filePath)
+            }
+        },
+
+        async put(key, value) {
+            const filePath = dataDir(getRoot(req)) + key + ".json"
+            // if folder does not exist, create it
+            await promisesFs.mkdir(dataDir(getRoot(req)) + key, { recursive: true })
+            try{
+                let content = value
+                try {
+                    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+                    content = JSON.stringify(parsed, null, 2)
+                } catch (parseErr) {
+                    // leave content as-is if it's not valid JSON
+                }
+                await promisesFs.writeFile(filePath, content)
+            }catch(error){
+                console.error("Error creating file: " + filePath, error)
+            }
+        },
+
+        async get(key) {
+            const filePath = dataDir(getRoot(req)) + key + ".json"
+            try{
+                const fileContent = await promisesFs.readFile(filePath, 'utf8')
+                return fileContent
+            }catch(error){
+                throw new Error("File not found")
+            }                   
+        }
+    };
+
+    return db;
+}
+
+// Regenerate board for a single device - registers actions, cards and generates the board
+// Note: If board already exists, it will NOT be regenerated. User must delete the board manually first.
+const regenerateBoardForDevice = async (deviceName: string) => {
+    const db = getDB('devices')
+    let deviceData
+    try {
+        deviceData = await db.get(deviceName)
+    } catch (err) {
+        logger.error({ deviceName, err }, 'Device not found for board regeneration')
+        throw new Error(`Device ${deviceName} not found`)
+    }
+    
+    const deviceInfo = DevicesModel.load(JSON.parse(deviceData))
+    
+    // Delete existing actions & cards for this device before adding new ones
+    await deleteDeviceActions(deviceInfo.data.name)
+
+    const subsystemCardId = `devices_${deviceInfo.data.name}_subsystems_overview`;
+    const deviceType = deviceInfo.data.name.split('_')[0] || deviceInfo.data.name;
+    const deviceTypeTitle = deviceType//.charAt(0).toUpperCase() + deviceType.slice(1);
+    await addCard({
+        group: 'devices',
+        tag: deviceInfo.data.name,
+        id: subsystemCardId,
+        templateName: `Subsystems Overview (${deviceTypeTitle})`,
+        name: 'subsystems_overview',
+        defaults: {
+            label: `${deviceInfo.data.name} subsystems`,
+            name: `${deviceInfo.data.name} subsystems`,
+            description: 'Live view of monitors and actions grouped by subsystem.',
+            rulesCode: 'return true',
+            type: 'value',
+            icon: 'component',
+            html: buildSubsystemsCardHtml(deviceInfo.data.name),
+            width: 6,
+            height: 18,
+            order: 0,
+            displayResponse: false,
+        },
+        emitEvent: true
+    })
+
+    const formatParamsJson = (json) => {
+        const parts = Object.entries(json).map(([key, value]) => {
+            return `${key} ${value}`;
+        });
+
+        if (parts.length === 0) {
+            return 'No constraints specified';
+        }
+
+        return `The value must have ${parts.join(', ')}`;
+    }
+
+    const toParamType = (schemaType?: string) => {
+        switch (schemaType) {
+            case 'int':
+            case 'number':
+                return 'number';
+            case 'array':
+            case 'object':
+                return 'string';
+            case 'boolean':
+            case 'bool':
+                return 'boolean';
+            default:
+                return 'string';
+        }
+    };
+
+    type JsonSchema = {
+        type?: 'string' | 'number' | 'int' | 'boolean' | 'object' | 'array';
+        default?: any;
+        enum?: any[];
+        minimum?: number;
+        properties?: Record<string, JsonSchema>;
+        required?: string[];
+        items?: JsonSchema;
+        description?: string;
+    };
+
+    const exampleForSchema = (field?: JsonSchema): any => {
+        if (!field || typeof field !== 'object') return null;
+
+        // If an explicit default is provided, prefer it
+        if (field.default !== undefined) return field.default;
+
+        switch (field.type) {
+            case 'object': {
+                const props = field.properties || {};
+                const keys = field.required?.length ? field.required : Object.keys(props);
+                const out: Record<string, any> = {};
+                for (const key of keys) {
+                    out[key] = exampleForSchema(props[key]);
+                }
+                return JSON.stringify(out, null, 2);
+            }
+            case 'array': {
+                // Build a one-element example array
+                const item = exampleForSchema(field.items || { type: 'string' });
+                return [item];
+            }
+            case 'string':
+                return Array.isArray(field.enum) && field.enum.length ? field.enum[0] : '';
+            case 'number':
+            case 'int':
+                return typeof field.minimum === 'number' ? field.minimum : 0;
+            case 'boolean':
+            case 'bool':
+                return false;
+            default:
+                return null;
+        }
+    };
+
+    const getParams = (params) => {
+        let actionParams = {}
+        for (const key in params) {
+            actionParams[key] = params[key].description || ''
+        }
+        return actionParams
+    }
+
+    for (const subsystem of deviceInfo.data?.subsystem ?? []) {
+        if (subsystem.name == "mqtt") continue
+        
+        for (const monitor of subsystem.monitors ?? []) {
+            const monitorModel = deviceInfo.getMonitorByEndpoint(monitor.endpoint)
+            const stateName = deviceInfo.getStateNameByMonitor(monitorModel)
+            const iconFromValue = monitor.cardProps?.icon ?? "scan-eye";
+            const colorFromValue = monitor.cardProps?.color;
+            const htmlFromValue = monitor.cardProps?.html;
+            const orderFromValue = monitor.cardProps?.order;
+            const { width, height } = computeCardSize({});
+            const cardWidth = monitor.cardProps?.width || width;
+            const cardHeight = monitor.cardProps?.height || height;
+            const monitorLabel = buildCardLabel({
+                platform: deviceInfo.data.platform,
+                deviceName: deviceInfo.data.name,
+                subsystemName: subsystem.name,
+                monitorName: monitor.name,
+                baseLabel: monitor.label,
+                type: 'monitor',
+            });
+
+            if (subsystem.monitors.length == 1) {
+                await addCard({
+                    group: 'devices',
+                    tag: deviceInfo.data.name,
+                    id: 'devices_monitors_' + deviceInfo.data.name + '_' + subsystem.name,
+                    templateName: buildCardTemplateName({
+                        platform: deviceInfo.data.platform,
+                        deviceName: deviceInfo.data.name,
+                        subsystemName: subsystem.name,
+                        baseLabel: monitor.label,
+                        type: 'monitor',
+                    }),
+                    name: subsystem.name,
+                    defaults: {
+                        label: monitorLabel,
+                        name: deviceInfo.data.name + ' ' + subsystem.name,
+                        description: monitor.description ?? "",
+                        rulesCode: `return states['devices']['${deviceInfo.data.name}']['${stateName}']`,
+                        type: 'value',
+                        icon: iconFromValue,
+                        ...(colorFromValue ? { color: colorFromValue } : {}),
+                        ...(htmlFromValue ? { html: htmlFromValue } : {}),
+                        ...(orderFromValue !== undefined ? { order: orderFromValue } : {}),
+                        ...(monitor.units ? { units: monitor.units } : {}),
+                        width: cardWidth,
+                        height: cardHeight
+                    },
+                    emitEvent: true
+                })
+            } else {
+                await addCard({
+                    group: 'devices',
+                    tag: deviceInfo.data.name,
+                    id: 'devices_monitors_' + deviceInfo.data.name + '_' + monitor.name,
+                    templateName: buildCardTemplateName({
+                        platform: deviceInfo.data.platform,
+                        deviceName: deviceInfo.data.name,
+                        subsystemName: subsystem.name,
+                        monitorName: monitor.name,
+                        baseLabel: monitor.label,
+                        type: 'monitor',
+                    }),
+                    name: monitor.name,
+                    defaults: {
+                        label: monitorLabel,
+                        name: deviceInfo.data.name + ' ' + monitor.name,
+                        description: monitor.description ?? "",
+                        rulesCode: `return states['devices']['${deviceInfo.data.name}']['${stateName}']`,
+                        type: 'value',
+                        icon: iconFromValue,
+                        ...(colorFromValue ? { color: colorFromValue } : {}),
+                        ...(htmlFromValue ? { html: htmlFromValue } : {}),
+                        ...(orderFromValue !== undefined ? { order: orderFromValue } : {}),
+                        ...(monitor.units ? { units: monitor.units } : {}),
+                        width: width,
+                        height: height
+                    },
+                    emitEvent: true
+                })
+            }
+        }
+
+        for (const action of subsystem.actions ?? []) {
+            const url = `/api/core/v1/devices/${deviceInfo.data.name}/subsystems/${subsystem.name}/actions/${action.name}`;
+            const isJsonSchema = action.payload?.type === "json-schema";
+
+            const params = { 
+                value: {
+                    description: action.description ?? "Value to send",
+                } 
+            };
+            if (isJsonSchema) {
+                delete params.value
+
+                if (action.payload?.schema && typeof action.payload?.schema === "object") {
+                    for (const [key, value] of Object.entries(action.payload.schema)) {
+                        if (typeof value === "object" && !Array.isArray(value)) {
+                            // Check if field has enum - render as select/dropdown
+                            if (value.enum && Array.isArray(value.enum)) {
+                                params[key] = {
+                                    visible: true,
+                                    description: value.description ?? '',
+                                    defaultValue: value.enum[0] ?? '',
+                                    type: 'select',
+                                    data: value.enum
+                                }
+                            } else {
+                                params[key] = {
+                                    visible: true,
+                                    description: value.description ?? formatParamsJson(value),
+                                    defaultValue: exampleForSchema(value),
+                                    type: toParamType(value.type)
+                                }
+                            }
+                        } else {
+                            params[key] = {
+                                visible: true,
+                                description: '',
+                                defaultValue: '',
+                                type: 'string'
+                            }
+                        }
+                    }
+                }
+            }
+            
+            const rulesCode = isJsonSchema
+                ? `const value = { value: JSON.stringify(userParams) };\nreturn (await execute_action('${url}', value))?.reply`
+                : `return (await execute_action('${url}', userParams))?.reply`;
+            
+            await addAction({
+                group: 'devices',
+                name: subsystem.name + '_' + action.name,
+                url: `/api/core/v1/devices/${deviceInfo.data.name}/subsystems/${subsystem.name}/actions/${action.name}`,
+                tag: deviceInfo.data.name,
+                description: action.description ?? "",
+                ...!action.payload?.value ? { params } : {},
+                emitEvent: true
+            })
+            
+            const iconFromAction = action.cardProps?.icon ?? "rocket";
+            const colorFromAction = action.cardProps?.color;
+            const htmlFromAction = action.cardProps?.html;
+            const orderFromAction = action.cardProps?.order;
+            const { width, height } = computeCardSize(params);
+            const cardWidth = action.cardProps?.width || width;
+            const cardHeight = action.cardProps?.height || height;
+            
+            await addCard({
+                group: 'devices',
+                tag: deviceInfo.data.name,
+                id: 'devices_' + deviceInfo.data.name + '_' + subsystem.name + '_' + action.name,
+                templateName: buildCardTemplateName({
+                    platform: deviceInfo.data.platform,
+                    deviceName: deviceInfo.data.name,
+                    subsystemName: subsystem.name,
+                    actionName: action.name,
+                    baseLabel: action.label,
+                    type: 'action',
+                }),
+                name: subsystem.name + '_' + action.name,
+                defaults: (() => {
+                    const paramsForDefaults = action.payload?.value ? {} : getParams(params);
+
+                    return {
+                        label: buildCardLabel({
+                            platform: deviceInfo.data.platform,
+                            deviceName: deviceInfo.data.name,
+                            subsystemName: subsystem.name,
+                            actionName: action.name,
+                            baseLabel: action.label,
+                            type: 'action',
+                        }),
+                        width: cardWidth,
+                        height: cardHeight + (action.mode === 'request-reply' ? 2 : 0),
+                        icon: iconFromAction,
+                        name: deviceInfo.data.name + ' ' + subsystem.name + ' ' + action.name,
+                        description: action.description ?? '',
+                        rulesCode,
+                        params: paramsForDefaults,
+                        configParams: params,
+                        type: 'action',
+                        ...(colorFromAction ? { color: colorFromAction } : {}),
+                        ...(htmlFromAction ? { html: htmlFromAction } : {}),
+                        ...(orderFromAction !== undefined ? { order: orderFromAction } : {}),
+                        displayResponse: action.mode === 'request-reply'
+                    };
+                })(),
+                emitEvent: true
+            })
+        }
+    }
+    
+    await generateDeviceBoard(deviceInfo.data.name, deviceInfo.data.name);
+    logger.info({ deviceName }, 'Regenerated board for device')
+}
+
+// iterate over all devices and register an action for each subsystem action
+const registerActions = async () => {
+    const db = getDB('devices')
+    for await (const [key, value] of db.iterator()) {
+        const deviceInfo = DevicesModel.load(JSON.parse(value))
+        await regenerateBoardForDevice(deviceInfo.data.name)
+    }
+}
+
+export const DevicesAutoAPI = AutoAPI({
+    modelName: 'devices',
+    modelType: DevicesModel,
+    prefix: '/api/core/v1/',
+    skipDatabaseIndexes: true,
+    getDB: getDB,
+    permissions: {
+        list: 'devices.read',
+        read: 'devices.read',
+        create: 'devices.create',
+        update: 'devices.update',
+        delete: 'devices.delete'
+    },
+    transformers:{
+        generateDeviceCredentials: async (field, e, data) => {
+            if (!data.credentials) data.credentials = {}
+            const mqttCreds: any = { username: data.name, password: getDeviceToken(data.name, false) }
+
+            // Resolve host/port for MQTT from environment or network discovery
+            let mqttHost = process.env.MQTT_HOST
+            let mqttPort = process.env.MQTT_PORT
+
+            // Try to infer host from network info (but never override port unless explicitly provided)
+            if (!mqttHost) {
+                try {
+                    const token = getServiceToken()
+                    const resp = await API.get(`/api/core/v1/netaddr/vento${token ? `?token=${token}` : ''}`)
+                    const baseUrl = resp?.data?.baseUrl
+                    if (baseUrl) {
+                        const parsed = new URL(baseUrl)
+                        mqttHost = parsed.hostname
+                    }
+                } catch (err) {
+                    // fall back to defaults
+                }
+            }
+            mqttCreds.host = mqttHost || 'localhost'
+            // Use explicit MQTT_PORT if set; otherwise default to 1883 (do NOT reuse HTTP port)
+            mqttCreds.port = mqttPort ? (parseInt(mqttPort, 10) || mqttPort) : 1883
+
+            data.credentials.mqtt = mqttCreds
+            return data
+        }
+
+    },
+    onAfterCreate: async (data, session) => {
+        if (data?.platform === 'esphome') {
+            await ensureEsphomeYamlConfigFile(data, session);
+        }
+        
+        // Generate subsystems and register actions so device appears in network immediately
+        if (data?.deviceDefinition) {
+            try {
+                const deviceModel = DevicesModel.load(data);
+                await deviceModel.setSubsystem();
+                // setSubsystem will also register actions for the device
+                logger.info({ deviceName: data.name }, 'Generated subsystems for new device');
+                if (data?.platform === 'esphome') {
+                    await regenerateBoardForDevice(data.name);
+                    logger.info({ deviceName: data.name }, 'Generated device board after create');
+                }
+            } catch (err) {
+                logger.warn({ deviceName: data.name, err }, 'Could not generate subsystems for new device (user can upload to generate them)');
+            }
+        }
+        
+        return data;
+    },
+    onAfterUpdate: async (data, session) => {
+        if (data?.platform === 'esphome') {
+            await ensureEsphomeYamlConfigFile(data, session);
+        }
+        return data;
+    },
+    onBeforeDelete: async (data, session, req) => {
+        console.log("🤖 ~ data:", data)
+        if(typeof data === 'string') {
+            try {
+                data = JSON.parse(data)
+            } catch (e) {
+                console.log("🤖 ~ Failed to parse data:", e)
+            }
+        }
+        // before deleting a device, remove all actions and cards associated with it
+        await deleteDeviceActions(data.name)
+        //also delete the folder in data/devices/[deviceName]
+        const devicePath = fspath.join(process.cwd(), getRoot(req), "data", "devices", data.name)
+        if(fs.existsSync(devicePath)){
+            fs.rmSync(devicePath, { recursive: true, force: true });
+            // console.log("🤖 ~ Deleted device path:", devicePath)
+        }
+        //delete associated board
+        const token = getServiceToken();
+        try {
+            await API.get(`/api/core/v1/boards/${encodeURIComponent(data.name)}/delete?token=${token}`);
+            logger.info({ boardName: data.name }, 'Deleted associated device board');
+        } catch (e: any) {
+            const status = e?.response?.status || e?.status;
+            if (status !== 404) {
+                logger.warn({ boardName: data.name, err: e?.response?.data || e }, 'Delete associated device board failed (non-404)');
+            }
+        }
+        return data;
+    }
+
+})
+
+const logger = getLogger()
+
+
+export default (app, context) => {
+    const devicesPath = '../../data/devices/'
+    const isServiceToken = (req) => {
+        const token = req?.query?.token
+        return !!token && token === getServiceToken()
+    }
+    const { topicSub, topicPub, mqtt } = context;
+
+    const parseMaybeJSON = (value: string) => {
+        if (typeof value !== 'string') {
+            return value;
+        }
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    };
+
+    const createReplyWaiter = (topic: string, timeoutMs: number) => {
+        let readyResolve: (() => void) | undefined;
+        const ready = new Promise<void>((resolve) => {
+            readyResolve = resolve;
+        });
+
+        const wait = new Promise<string>((resolve, reject) => {
+            let settled = false;
+            let listening = false;
+
+            const cleanup = () => {
+                if (settled) return;
+                settled = true;
+                if (listening) {
+                    mqtt?.removeListener?.('message', onMessage as any);
+                    mqtt?.unsubscribe?.(topic, () => undefined);
+                }
+                clearTimeout(timer);
+            };
+
+            const onMessage = (messageTopic: string, payload: Buffer) => {
+                if (messageTopic !== topic) {
+                    return;
+                }
+                cleanup();
+                resolve(payload?.toString?.() ?? String(payload));
+            };
+
+            const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timeout waiting for reply on ${topic}`));
+            }, timeoutMs);
+
+            mqtt?.subscribe(topic, { qos: 1 }, (err) => {
+                if (err) {
+                    cleanup();
+                    reject(err);
+                    return;
+                }
+                listening = true;
+                mqtt?.on?.('message', onMessage as any);
+                readyResolve?.();
+            });
+        });
+
+        return { ready, wait };
+    };
+    DevicesAutoAPI(app, context)
+    // Device topics: devices/[deviceName]/[endpoint], en caso de no tener endpoint: devices/[deviceName]
+    /* examples
+        devices/patata/switch/relay/actions/status
+        devices/patata/button/relay/actions/status
+        ...
+    */
+
+
+    registerActions()
+
+    const resolveAssociatedDevice = async (boardName: string, message: any) => {
+        // Try payload first (if deletion event sends board data)
+        try {
+            const parsed = typeof message === 'string' ? JSON.parse(message) : message;
+            if (parsed && typeof parsed === 'object' && parsed.associated_device) {
+                return String(parsed.associated_device);
+            }
+        } catch {
+            // ignore parse errors
+        }
+
+        // Try reading the board file (if still on disk)
+        const boardFile = fspath.join(process.cwd(), 'data', 'boards', `${boardName}.json`);
+        if (fs.existsSync(boardFile)) {
+            try {
+                const content = JSON.parse(fs.readFileSync(boardFile, 'utf8'));
+                if (content?.associated_device) {
+                    return String(content.associated_device);
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        // Fallback: legacy behavior (board name equals device name)
+        return boardName || null;
+    };
+
+    // When a board is deleted, also delete the associated device
+    // This is safe now because boards are NOT regenerated automatically anymore
+    topicSub(mqtt, 'notifications/board/delete/#', async (message, topic) => {
+        try {
+            const boardName = topic.replace('notifications/board/delete/', '')
+            if (!boardName) return
+            const associatedDevice = await resolveAssociatedDevice(boardName, message);
+            if (!associatedDevice) return;
+
+            const token = getServiceToken();
+            try {
+                await API.get(`/api/core/v1/devices/${encodeURIComponent(associatedDevice)}/delete?token=${token}`);
+                logger.info({ boardName, deviceName: associatedDevice }, 'Deleted device via API because its board was deleted');
+            } catch (err) {
+                logger.error({ boardName, deviceName: associatedDevice, err }, 'Failed to delete device via API after board deletion');
+            }
+        } catch (err) {
+            logger.error({ err, topic }, 'Error handling board delete')
+        }
+    })
+
+    const devicePlatforms = {}
+    const getDevicePlatforms = () => Object.keys(devicePlatforms)
+    
+    const addDevicePlatform = (platform) => {
+        const platforms = getDevicePlatforms()
+        if(platform && !platform.name) {{
+            console.log("Skip platform addition: ", platform)
+        }
+        if(!platforms.includes(platform.name)){
+            console.log("Registering device platform: ", platform)
+            devicePlatforms[platform.name] = platform.data || {}
+        }
+        }
+    }
+
+    
+    app.post('/api/core/v1/devices/platform', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.create')
+        addDevicePlatform(req.body.platform)
+        res.send({message: 'Register platform devices'})
+    }))
+
+    app.get('/api/core/v1/devices/:device/regenerateBoard', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.update')
+
+        const deviceName = req.params.device
+        try {
+            // Note: If board exists, this won't recreate it. User must delete board first.
+            await regenerateBoardForDevice(deviceName)
+            res.send({message: 'Board regenerated (or skipped if already exists)', device: deviceName})
+        } catch (err: any) {
+            logger.error({ deviceName, err: err.message }, 'Failed to regenerate board')
+            res.status(404).send({error: err.message || 'Failed to regenerate board'})
+        }
+    }))
+
+    app.get('/api/core/v1/devices/registerActions', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.update')
+        registerActions()
+        res.send({message: 'Register actions started'})
+    }))
+
+    app.get('/api/core/v1/devices/path', handler(async (req, res, session) => {
+        const devicesPath = fspath.join(process.cwd(), getRoot(req), "data", "devices")
+        if (!isServiceToken(req) && !checkPermission(session, 'devices.read')) {
+            res.status(403).send({error: "Forbidden"})
+            return
+        }
+
+        if(!fs.existsSync(devicesPath)){
+            console.log("Creating devices path: ", devicesPath)
+            fs.mkdir(devicesPath, {recursive: true}, err => {
+                if (err) {
+                    console.error("Error creating devices path: ", err)
+                    res.status(500).send({error: "Internal Server Error"})
+                    return
+                }else{
+                    if(fs.existsSync(devicesPath)){
+                        console.log("Devices path created successfully: ", devicesPath)
+                        res.send({path: devicesPath})
+                        return
+                    }else{
+                        res.status(404).send({error: "Not Found"})
+                        return
+                    }
+                }
+            })
+        }else{
+            res.send({path: devicesPath})
+        }
+        
+    }))
+
+    app.get('/api/core/v1/devices/:device/subsystems/:subsystem/actions/:action/:value?', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.update')
+        console.log("action params: ",req.params)
+        const valueParam = req.params.value ?? req.query.value ?? (req.body && typeof req.body === 'object' ? (req.body as any).value : undefined)
+        const value = Array.isArray(valueParam) ? valueParam[0] : valueParam
+        const db = getDB('devices')
+        const deviceInfo = DevicesModel.load(JSON.parse(await db.get(req.params.device)), session)
+        const subsystem = deviceInfo.getSubsystem(req.params.subsystem)
+        if(!subsystem) {
+            res.status(404).send(`Subsytem [${req.params.subsystem}] not found in device [${req.params.device}]`)
+            return
+        }
+        
+        const action = subsystem.getAction(req.params.action)
+        if(!action) {
+            res.status(404).send(`Action [${req.params.action}] not found in Subsytem [${req.params.subsystem}] for device [${req.params.device}]`)
+            return
+        }
+
+        const payloadValue = value == undefined ? action.data.payload?.type == "json" ? JSON.stringify(action.getValue()) : action.getValue() : value
+        const mode = action.getMode?.()
+
+        if(mode === 'request-reply') {
+            const baseEndpoint = action.getEndpoint().replace(/\/+$/, '')
+            const requestId = randomUUID().replace(/-/g, '')
+            const requestTopic = deviceInfo.data.platform === 'esphome' ? `${baseEndpoint}` : `${baseEndpoint}/${requestId}`
+            const replyTopic = `${requestTopic}/reply`
+            const timeoutMs = action.getReplyTimeoutMs?.() ?? action.data.replyTimeoutMs ?? 5000
+            const { ready, wait } = createReplyWaiter(replyTopic, timeoutMs)
+            try {
+                await ready
+                topicPub(mqtt, requestTopic, payloadValue ?? '')
+                const replyMessage = await wait
+                res.send({
+                    subsystem: req.params.subsystem,
+                    action: req.params.action,
+                    device: req.params.device,
+                    mode,
+                    requestId,
+                    replyTopic,
+                    result: 'reply',
+                    reply: parseMaybeJSON(replyMessage)
+                })
+            } catch (err: any) {
+                const status = err?.message?.toLowerCase?.().includes('timeout') ? 504 : 500
+                res.status(status).send({
+                    subsystem: req.params.subsystem,
+                    action: req.params.action,
+                    device: req.params.device,
+                    mode,
+                    requestId,
+                    replyTopic,
+                    error: err?.message ?? 'Failed waiting for reply'
+                })
+            }
+            return
+        }
+
+        topicPub(mqtt, action.getEndpoint(), payloadValue ?? '')
+        
+        res.send({
+            subsystem: req.params.subsystem,
+            action: req.params.action,
+            device: req.params.device,
+            result: 'done'
+        })
+    }))
+
+    app.get('/api/core/v1/devices/:device/subsystems/:subsystem/monitors/:monitor', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.read')
+
+        const db = getDB('devices')
+        const deviceInfo = DevicesModel.load(JSON.parse(await db.get(req.params.device)), session)
+        const subsystem = deviceInfo.getSubsystem(req.params.subsystem)
+        if(!subsystem) {
+            res.status(404).send(`Subsytem [${req.params.subsystem}] not found in device [${req.params.device}]`)
+            return
+        }
+
+        const monitor = subsystem.getMonitor(req.params.monitor)
+        if(!monitor) {
+            res.status(404).send(`Monitor [${req.params.monitor}] not found in Subsytem [${req.params.subsystem}] for device [${req.params.device}]`)
+            return
+        }
+        
+        //x=1 is a dummy param to allow the use of the & operator in the url
+        const urlLastDeviceEvent = `/api/core/v1/events?x=1&filter[from]=device&filter[user]=${req.params.device}&filter[path]=${monitor.getEventPath()}&itemsPerPage=1&token=${session.token}&orderBy=created&orderDirection=desc`
+        const data = await API.get(urlLastDeviceEvent)
+
+        if(!data || !data.data ||  !data.data['items'] || !data.data['items'].length) {
+            res.status(404).send({value:null})
+            return
+        }
+        res.send({value: data.data['items'][0]?.payload?.message})
+    }))
+
+    app.post('/api/core/v1/devices/:device/subsystems/:subsystem/monitors/:monitor/ephemeral', handler(async (req, res, session) => {
+        hasPermission(session, 'devices.update')
+
+        const db = getDB('devices')
+        const deviceInfo = DevicesModel.load(JSON.parse(await db.get(req.params.device)), session)
+        const subsystem = deviceInfo.getSubsystem(req.params.subsystem)
+        if(!subsystem) {
+            res.status(404).send(`Subsytem [${req.params.subsystem}] not found in device [${req.params.device}]`)
+            return
+        }
+
+        const monitor = subsystem.getMonitor(req.params.monitor)
+        if(!monitor) {
+            res.status(404).send(`Monitor [${req.params.monitor}] not found in Subsytem [${req.params.subsystem}] for device [${req.params.device}]`)
+            return
+        }
+        let {value} = req.body
+        if(value == "true"  || value == true) {
+            value = true;
+        }else{
+            value = false;
+        }
+        const device = deviceInfo.setMonitorEphemeral(req.params.subsystem, req.params.monitor, value)
+        if(device){
+            await db.put(device.getId(), JSON.stringify(device.serialize(true)))
+        }
+        res.send({value})
+    }))
+
+    const processMessage = async (message: string, topic: string) => {
+        const splitted = topic.split("/");
+        const device = splitted[0];
+        const deviceName = splitted[1];
+        const endpoint = splitted.slice(2).join("/")
+        let parsedMessage = message;
+        try {
+            parsedMessage = JSON.parse(message);
+        } catch (err) { }
+        if (endpoint == 'debug') {
+            // logger.error({ from: device, deviceName, endpoint }, JSON.stringify({topic, message}))
+        } else {
+            const db = getDB('devices')
+            let deviceInfo = undefined
+            try {
+                deviceInfo = DevicesModel.load(JSON.parse(await db.get(deviceName)))
+            } catch (err) {
+                logger.error({ from: device, deviceName, endpoint }, "Device not found: "+JSON.stringify({topic, message}))
+                return
+            }
+            // console.log("deviceInfo: ", deviceInfo)
+            // console.log("subsystems: ", deviceInfo.data.subsystem)
+            // console.log("endpoint: ", endpoint)
+            const monitor = deviceInfo?.getMonitorByEndpoint("/"+endpoint)
+            // console.log("monitor: ", monitor)
+            if(!monitor){
+                // logger.error({ from: device, deviceName, endpoint }, "Device not found: "+JSON.stringify({topic, message}))
+                return
+            }
+            // const subsystem = deviceInfo.getSubsystem(req.params.subsystem)
+            const stateName = deviceInfo.getStateNameByMonitor(monitor)
+            context.state.set({ group: 'devices', tag: deviceName, name: stateName, value: parsedMessage, emitEvent: true });
+            generateEvent(
+                {
+                    ephemeral: monitor.data.ephemeral??false,
+                    path: endpoint, 
+                    from: "device",
+                    user: deviceName,
+                    payload: {
+                        message: parsedMessage,
+                        deviceName,
+                        endpoint
+                    }
+                },
+                getServiceToken()
+            );
+        }
+    }
+
+    topicSub(mqtt, 'devices/#', (message, topic) => processMessage(message, topic))
+
+    const processCompileMessage = async (message: string, topic: string) => {
+        const splitted = topic.split("/");
+        const compileSessionId = splitted[2];
+        let parsedMessage = message;
+        try {
+            parsedMessage = JSON.parse(message);
+            // console.log("🤖 ~ processCompileMessage ~ parsedMessage:", parsedMessage)
+        } catch (err) { }
+        let deviceName = parsedMessage.deviceName;
+
+        if(parsedMessage.event == "exit") {
+            // console.log("Compile session exited: ", compileSessionId, parsedMessage, deviceName)
+            const db = getDB('devices')
+            let deviceInfo = undefined
+            try {
+                deviceInfo = DevicesModel.load(JSON.parse(await db.get(deviceName)))
+                if (!deviceInfo.data.data) {
+                    deviceInfo.data.data = {};
+                }
+                deviceInfo.data.data.lastCompile = {
+                    sessionId: compileSessionId,
+                    timestamp: Date.now(),
+                    code: parsedMessage.code,
+                    success: parsedMessage.code == 0,
+                }
+                await db.put(deviceInfo.getId(), JSON.stringify(deviceInfo.serialize(true)))
+                console.log("Updated device lastCompile info: ", deviceName, deviceInfo.data.data.lastCompile)
+            } catch (err) {
+                //logger.error({ deviceName }, "Device not found to update compile info: " + JSON.stringify({ topic, message }))
+                return
+            }
+        }
+    }
+    const compileBrokerUrl = protoInfraUrls.esphome.mqtt
+    const COMPILE_DEFAULT_RECONNECT_PERIOD_MS = 5000;
+    const COMPILE_BACKOFF_RECONNECT_PERIOD_MS = 5 * 60 * 1000;
+    const MAX_COMPILE_RECONNECT_ATTEMPTS = 12;
+    let compileReconnectAttempts = 0;
+    let compileBackoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const compileClientOpts: IClientOptions = {
+        clean: true,
+        reconnectPeriod: COMPILE_DEFAULT_RECONNECT_PERIOD_MS
+    };
+
+    const scheduleCompileBackoffReconnect = () => {
+        if (compileBackoffTimer) return;
+        compileBackoffTimer = setTimeout(() => {
+            compileBackoffTimer = null;
+            compileReconnectAttempts = 0;
+            logger.info(`Retrying compile MQTT connection after ${COMPILE_BACKOFF_RECONNECT_PERIOD_MS / 60000} minutes`);
+            compileClient.reconnect();
+        }, COMPILE_BACKOFF_RECONNECT_PERIOD_MS);
+    };
+
+    const compileClient = mqttConnect(compileBrokerUrl, compileClientOpts);
+    const subscribeTopic = compileMessagesTopic('#');
+
+    compileClient.on('connect', () => {
+        compileReconnectAttempts = 0;
+        if (compileBackoffTimer) {
+            clearTimeout(compileBackoffTimer);
+            compileBackoffTimer = null;
+        }
+        logger.info({ broker: compileBrokerUrl }, 'Connected to compile MQTT broker');
+        compileClient.subscribe(subscribeTopic, { qos: 1 }, (err) => {
+            if (err) {
+                logger.error({ err }, 'Failed subscribing to ' + subscribeTopic);
+            } else {
+                logger.info('Subscribed to ' + subscribeTopic);
+            }
+        });
+    });
+
+    compileClient.on('message', (topic, payload) => {
+        try {
+            const msg = payload?.toString?.() ?? String(payload);
+            processCompileMessage(msg, topic);
+        } catch (err) {
+            logger.error({ err, topic }, 'Error handling compile MQTT message');
+        }
+    });
+
+    compileClient.on('error', (err) => {
+        logger.error({ err }, 'compile MQTT client error');
+    });
+    compileClient.on('reconnect', () => {
+        compileReconnectAttempts += 1;
+        logger.info(`Reconnecting to compile MQTT broker (attempt ${compileReconnectAttempts})`);
+        if (compileReconnectAttempts >= MAX_COMPILE_RECONNECT_ATTEMPTS && !compileBackoffTimer) {
+            logger.warn(`Reached ${MAX_COMPILE_RECONNECT_ATTEMPTS} compile MQTT reconnect attempts. Will retry every ${COMPILE_BACKOFF_RECONNECT_PERIOD_MS / 60000} minutes`);
+            compileClient.end(true, () => scheduleCompileBackoffReconnect());
+        }
+    });
+    compileClient.on('close', () => logger.warn('compile MQTT connection closed'));
+
+    process.on('SIGINT', () => {
+        compileClient.end(true, () => logger.info('compile MQTT client closed (SIGINT)'));
+    });
+    process.on('SIGTERM', () => {
+        compileClient.end(true, () => logger.info('compile MQTT client closed (SIGTERM)'));
+    });
+
+}

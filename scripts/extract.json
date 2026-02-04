@@ -1,0 +1,8 @@
+{
+    "files": [
+        "package.json",
+        "routes.js",
+        "system.js",
+        "download-*.js"
+    ]
+}

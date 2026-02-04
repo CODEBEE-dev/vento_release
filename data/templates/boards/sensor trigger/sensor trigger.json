@@ -1,0 +1,136 @@
+{
+    "name": "{{{name}}}",
+    "cards": [
+        {
+            "key": "value_1765965156214_0_4dj3yjv20",
+            "name": "sensor value",
+            "id": "devices.android_9580e66b.light",
+            "group": "devices",
+            "tag": "android_9580e66b",
+            "templateName": "android_9580e66b light device value",
+            "label": "Light sensor",
+            "description": "Ambient light level (lux)",
+            "type": "value",
+            "icon": "sun",
+            "color": "$yellow10",
+            "order": 26,
+            "width": 2,
+            "height": 6,
+            "layer": "base",
+            "rulesCode": "return states['devices']['android_9580e66b']['sensors_light']?.[\"illuminance\"]",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n            <YStack f={1} height=\"100%\" ai=\"center\" jc=\"center\" width=\"100%\">\n                {card.icon && card.displayIcon !== false && (\n                    <Icon name={card.icon} size={48} color={card.color}/>\n                )}\n                {card.displayResponse !== false && (\n                    <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n                )}\n            </YStack>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n\n"
+        },
+        {
+            "key": "action_1765965617812_0_0gcro048c",
+            "name": "below actions",
+            "id": "devices.android_9580e66b.sensors_torch",
+            "group": "devices",
+            "tag": "android_9580e66b",
+            "templateName": "android_9580e66b sensors torch device action",
+            "label": "Flashlight",
+            "width": 2,
+            "height": 9,
+            "icon": "flashlight",
+            "description": "Turns the flashlight on/off",
+            "params": {
+                "state": "Desired flashlight state Possible values: on, off"
+            },
+            "configParams": {
+                "state": {
+                    "visible": false,
+                    "description": "Desired flashlight state Possible values: on, off",
+                    "defaultValue": "on",
+                    "type": "string"
+                }
+            },
+            "type": "action",
+            "color": "$yellow10",
+            "order": 28,
+            "displayResponse": false,
+            "layer": "base",
+            "buttonLabel": "ON",
+            "rulesCode": "const value = { value: JSON.stringify(userParams) };\nreturn (await execute_action('/api/core/v1/devices/android_9580e66b/subsystems/sensors/actions/torch', value))?.reply",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        },
+        {
+            "key": "action_1765965617812_0_0gcro048c_vento_copy_27p9qz1ozi6s0i1x1kjsmc",
+            "name": "above actions",
+            "id": "devices.android_9580e66b.sensors_torch",
+            "group": "devices",
+            "tag": "android_9580e66b",
+            "templateName": "android_9580e66b sensors torch device action",
+            "label": "Flashlight",
+            "width": 2,
+            "height": 9,
+            "icon": "flashlight",
+            "description": "Turns the flashlight on/off",
+            "params": {
+                "state": "Desired flashlight state Possible values: on, off"
+            },
+            "configParams": {
+                "state": {
+                    "visible": false,
+                    "description": "Desired flashlight state Possible values: on, off",
+                    "defaultValue": "off",
+                    "type": "string"
+                }
+            },
+            "type": "action",
+            "color": "var(--gray9)",
+            "order": 28,
+            "displayResponse": false,
+            "layer": "base",
+            "theme": "light",
+            "domId": "e43d31b2-53ac-49dc-9003-93a3616eb282",
+            "cardState": {},
+            "buttonLabel": "OFF",
+            "rulesCode": "const value = { value: JSON.stringify(userParams) };\nreturn (await execute_action('/api/core/v1/devices/android_9580e66b/subsystems/sensors/actions/torch', value))?.reply",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        },
+        {
+            "key": "value_1765967428819_0_1izk79gaw",
+            "name": "thresholded value",
+            "id": "base.cards.value",
+            "group": "base",
+            "tag": "cards",
+            "templateName": "Value",
+            "type": "value",
+            "width": 2,
+            "height": 7,
+            "icon": "scan-eye",
+            "description": "Default description, edit this description to improve usability of this value",
+            "params": {
+                "threshold": "threshold value"
+            },
+            "configParams": {
+                "threshold": {
+                    "visible": true,
+                    "defaultValue": "100",
+                    "type": "number"
+                }
+            },
+            "layer": "base",
+            "rules": [
+                "return above if sensor value is above the threshold input param return below otherwise "
+            ],
+            "rulesCode": "// This code lee el valor de iluminancia del sensor desde el board y el umbral desde params.input, los convierte a número y devuelve \"above\" si el valor del sensor es estrictamente mayor que el umbral, o \"below\" en caso contrario, tal como indica la regla.\nconst sensorValue = parseFloat(board?.['sensor value']);\nconst threshold = parseFloat(params?.threshold);\nif (isNaN(sensorValue) || isNaN(threshold)) {\n  return \"below\";\n}\nreturn sensorValue > threshold ? \"above\" : \"below\";",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n            <YStack f={1} height=\"100%\" ai=\"center\" jc=\"center\" width=\"100%\">\n                {card.icon && card.displayIcon !== false && (\n                    <Icon name={card.icon} size={48} color={card.color}/>\n                )}\n                {card.displayResponse !== false && (\n                    <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n                )}\n            </YStack>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n\n"
+        }
+    ],
+    "layouts": {},
+    "graphLayout": {},
+    "rules": [
+        "when thresholded value changes execute it's action "
+    ],
+    "settings": {
+        "autoplay": false
+    },
+    "icon": "bot-message-square",
+    "autopilot": false,
+    "tags": [],
+    "devices": [
+        "android_9580e66b"
+    ],
+    "boardCode": "const { boardConnect } = require('protonode')\nconst { Protofy } = require('protobase')\n\nconst run = Protofy(\"code\", async ({ context, states, board }) => {\nboard.onChange({\n    name: \"thresholded value\",\n    changed: async (value) => {\n        if (value === \"above\") await board.execute_action({ name: \"above actions\", params: {} })\n        else if (value === \"below\") await board.execute_action({ name: \"below actions\", params: {} })\n    }\n})\n})\n\nboardConnect(run)",
+    "boardUI": "//@card/react\n//board is the board object\n//state is the state of the board\n\nfunction Widget({board, state}) {\n    const cards = board.cards.reduce((total, card) => {\n        return {\n            ...total,\n            [card.name]: card\n        }\n    }, {})\n\n\n    return <XStack gap=\"$5\" width=\"100%\" f={1}>\n        <YStack>\n            {\n                Object.keys(cards).map(card => {\n                    return <YStack height=\"60px\" jc=\"center\" gap={\"$4\"}>\n                        <div>{card}</div>\n                    </YStack>\n                })\n            }\n        </YStack>\n        <YStack>\n            {\n                Object.keys(cards).map(card => {\n                    return <XStack ai=\"center\" height=\"60px\" gap={\"$4\"}>\n                        <div>{JSON.stringify(state?.[card])}</div>\n                    </XStack>\n                })\n            }\n        </YStack>\n        <YStack>\n            {\n                Object.keys(cards).map(card => {\n                    return <XStack ai=\"center\" height=\"60px\" gap={\"$4\"}>\n                        {cards[card] && cards[card].type == 'action' ? <Button onPress={() => {\n                            execute_action(card, {})\n                        }}>Run</Button> : ''}\n                    </XStack>\n                })\n            }\n        </YStack>\n    </XStack>\n}\n                "
+}

@@ -1,0 +1,811 @@
+import {
+  Cable, Copy, Trash2, Settings, MoreVertical, Book, FileJson, ClipboardList,
+  FileCode, FileInput, ExternalLink, Globe, Layers as LayersIcon, Check, Plus, FileOutput, Info, StopCircle, X
+} from '@tamagui/lucide-icons'
+import { YStack, XStack, Popover, Text, TooltipSimple, Paragraph, Button, Input } from '@my/ui'
+import { AlertDialog } from 'protolib/components/AlertDialog'
+import { CenterCard } from '@extensions/services/widgets'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Tinted } from 'protolib/components/Tinted'
+import dynamic from 'next/dynamic'
+import { useEventEffect } from '@extensions/events/hooks'
+import { JSONView } from 'protolib/components/JSONView'
+import { useIsHighlightedCard, executeAction, useLayers } from '../store/boardStore'
+import { PublicIcon } from 'protolib/components/IconSelect'
+import { API } from 'protobase'
+
+const ActionRunner = dynamic(() => import('protolib/components/ActionRunner').then(mod => mod.ActionRunner), { ssr: false })
+
+interface RunningExecution {
+  executionId: string;
+  startedAt: number;
+  contextId?: string;
+}
+
+const CardIcon = ({ Icon, onPress, ...props }) => {
+  return <Tinted>
+    <XStack {...props} right={-10} hoverStyle={{ backgroundColor: '$backgroundFocus' }} pressStyle={{ backgroundColor: '$backgroundPress' }} borderRadius="$5" alignItems="center" justifyContent="center" cursor="pointer" padding="$2" onPress={onPress}>
+      <Icon size={20} onPress={onPress} />
+    </XStack>
+  </Tinted>
+}
+
+type CardActionsProps = {
+  id: string
+  data: any
+  states: any
+  readOnly?: boolean
+  onEdit: (tab: string) => void
+  onDelete: () => void
+  onEditCode: () => void
+  onCopy: () => void
+  onDetails: () => void
+  onMoveLayer: (layer: string) => void
+  executions?: RunningExecution[]
+  cancelExecution?: (executionId: string) => void
+}
+
+const CardActions = ({ id, data, onEdit, onDelete, onEditCode, onCopy, onDetails, states, onMoveLayer, readOnly, executions = [], cancelExecution }: CardActionsProps) => {
+  const [menuOpened, setMenuOpened] = useState(false)
+  const [cardStatesOpen, setCardStatesOpen] = useState(false)
+  const cardActionRef = useRef(null)
+  const hasSpace = (cardActionRef.current as any)?.offsetWidth > 200
+
+  const [layers, setLayers] = useLayers()              // 👈 necesitamos setLayers para crear nuevas
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [creating, setCreating] = useState(false)      // 👈 modo crear capa
+  const [newLayer, setNewLayer] = useState('')         // 👈 nombre de la capa nueva
+  const newInputRef = useRef<HTMLInputElement>(null)
+
+  const [execPopoverOpen, setExecPopoverOpen] = useState(false);
+  const [, setTick] = useState(0);
+  const hasExecs = executions.length > 0;
+  useEffect(() => {
+    if (!hasExecs) return;
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [hasExecs]);
+
+  const formatElapsed = (startedAt: number) => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  };
+
+  const [addTemplateDialog, setAddTemplateDialog] = useState(false)
+  const [templateName, setTemplateName] = useState(data?.name ?? '')
+  const [templateGroup, setTemplateGroup] = useState('boards')
+  const [templateTag, setTemplateTag] = useState('copytemplates')
+  const [templateError, setTemplateError] = useState('')
+
+  const openCreate = () => {
+    setCreating(true)
+    setTimeout(() => newInputRef.current?.focus(), 0)
+  }
+
+  const normalizeLayerName = (s: string) =>
+    s.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-_]/g, '').slice(0, 60) || 'layer'
+
+  const confirmCreate = () => {
+    const candidate = normalizeLayerName(newLayer)
+    if (!candidate) return
+    if (layers.includes(candidate)) {
+      // si existe, simplemente mover
+      onMoveLayer(candidate)
+      setCreating(false)
+      setNewLayer('')
+      setLayersOpen(false)
+      setMenuOpened(false)
+      return
+    }
+    setLayers((prev: string[]) => [...prev, candidate])
+    onMoveLayer(candidate)
+    setCreating(false)
+    setNewLayer('')
+    setLayersOpen(false)
+    setMenuOpened(false)
+  }
+
+  const MenuButton = ({ text, Icon, onPress }: { text: string, Icon: any, onPress: any }) => {
+    return (
+      <XStack width="100%" id={id} opacity={1} borderRadius="$3" padding="$2" paddingHorizontal="$2.5" alignSelf="flex-start" cursor="pointer" pressStyle={{ opacity: 0.7 }} hoverStyle={{ backgroundColor: "$color5" }}
+        onPress={(e) => {
+          onPress(e)
+          setMenuOpened(false)
+        }}
+      >
+        <Icon size={14} color="var(--color9)" strokeWidth={2} />
+        <Text marginLeft="$2" fontSize={13}>{text}</Text>
+      </XStack>
+    )
+  }
+
+  const FlippedFileOutput = (props: any) => <FileOutput {...props} style={{ transform: 'scaleX(-1)' }} />
+
+  const menuShortcuts = [
+    { id: 'params', text: readOnly ? 'View Inputs' : 'Edit Inputs', icon: FileInput },
+    { id: 'output', text: readOnly ? 'View Output' : 'Edit Output', icon: FlippedFileOutput },
+    { id: 'rules', text: readOnly ? 'View Rules' : 'Edit Rules', icon: ClipboardList },
+    { id: 'config', text: readOnly ? 'View Settings' : 'Edit Settings', icon: Settings },
+    { id: 'view', text: readOnly ? 'View UI' : 'Edit UI', icon: FileCode },
+    { id: 'info', text: readOnly ? 'View Description' : 'Edit Description', icon: Info }
+  ].filter(menu => !(data?.editorOptions?.hiddenTabs ?? []).includes(menu.id))
+
+  const isJSONView = states && typeof states !== 'string' && typeof states !== 'number' && typeof states !== 'boolean'
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const boardName = typeof window !== 'undefined' ? (window as any)['protoBoardName'] : ''
+
+  const normalizeUrl = (u?: string) => {
+    if (!u) return undefined
+    if (/^https?:\/\//i.test(u)) return u
+    return `${origin}${u.startsWith('/') ? '' : '/'}${u}`
+  }
+
+  const makeReadUrl = () => {
+    if (data?.enableCustomPath && data?.customPath) return normalizeUrl(data.customPath)
+    return `${origin}/api/core/v1/boards/${boardName}/cards/${data?.name}`
+  }
+
+  const makeRunUrl = () => {
+    if (data?.enableCustomRunPath && data?.customRunPath) return normalizeUrl(data.customRunPath)
+    return `${origin}/api/core/v1/boards/${boardName}/cards/${data?.name}/run`
+  }
+
+  return <>
+    <Tinted>
+    <XStack ref={cardActionRef} paddingTop="$1" flex={1} paddingRight="$4" justifyContent={hasSpace ? "space-between" : "flex-end"} alignItems="center">
+      <Popover key="card-states" onOpenChange={setCardStatesOpen} open={cardStatesOpen} allowFlip={true} stayInFrame={true} placement='bottom-start'>
+        <Popover.Trigger display={hasSpace ? 'block' : 'none'}>
+          <CardIcon className='no-drag' Icon={Book} onPress={(e) => { e.stopPropagation(); setCardStatesOpen(true) }} />
+        </Popover.Trigger>
+        {/* @ts-ignore */}
+        <Popover.Content gap="$2" padding={0} ai="flex-start" minWidth="300px" maxWidth="400px" minHeight="100px" maxHeight="500px" overflow='auto' space={0} l="$2" p="$2" bw={1} boc="$gray6" bc={"$gray1"} >
+          <XStack justifyContent="center" alignItems="center" width="100%" gap="$2" flexWrap='wrap-reverse'>
+            <Text color="$gray10" textAlign="center">{data.name}</Text>
+            {data?.icon && <PublicIcon name={data.icon} color="var(--gray10)" size={18} />}
+          </XStack>
+          {data?.configParams && Object.keys(data.configParams).length > 0 && <YStack paddingLeft="$2" gap="$2">
+            <Text color="$color" fontSize="$3">Inputs</Text>
+            <XStack flexWrap="wrap" width="100%" gap="$2">
+              {Object.keys(data.configParams).map((param, index) => (
+                <TooltipSimple key={index} label={data.configParams[param]?.defaultValue || 'No default value'} delay={{ open: 200, close: 0 }} restMs={0}>
+                  <YStack cursor='help' hoverStyle={{ backgroundColor: "$gray5" }} paddingHorizontal="$3" paddingVertical="$1" borderRadius="$3" borderWidth={1} borderColor="$gray4" backgroundColor={"$gray3"}>
+                    <Text fontWeight="500">{param}</Text>
+                  </YStack>
+                </TooltipSimple>
+              ))}
+            </XStack>
+          </YStack>}
+          <YStack padding="$2" gap="$2" width="100%" borderRadius="$2">
+            <Text color="$color" fontSize="$3">State</Text>
+            {isJSONView ? <JSONView src={states ?? {}} /> : <Text color={states ? "$color" : "$gray10"}>{states ?? "N/A"}</Text>}
+          </YStack>
+        </Popover.Content>
+      </Popover>
+
+      <XStack className='no-drag'>
+        {data?.sourceFile && <CardIcon Icon={Cable} onPress={onEditCode} />}
+        {/* <CardIcon display={hasSpace ? 'block' : 'none'} Icon={Settings} onPress={() => onEdit(data?.editorOptions?.defaultTab ?? "params")} /> */}
+
+        {executions.length > 0 && (
+          <Popover open={execPopoverOpen} onOpenChange={setExecPopoverOpen} allowFlip stayInFrame placement="bottom-end">
+            <Popover.Trigger>
+              <CardIcon Icon={StopCircle} onPress={(e) => { e.stopPropagation(); setExecPopoverOpen(v => !v) }} />
+            </Popover.Trigger>
+            <Popover.Content padding="$3" borderWidth={1} borderColor="$gray6"
+              backgroundColor="$gray1" minWidth={220}>
+              <YStack gap="$2">
+                <Text fontWeight="600" fontSize="$3">
+                  {executions.length} execution{executions.length !== 1 ? 's' : ''} running
+                </Text>
+                {executions.map((exec) => (
+                  <XStack key={exec.executionId} gap="$2" ai="center" py="$1"
+                    borderTopWidth={1} borderColor="$gray4">
+                    <YStack flex={1} gap="$1">
+                      <Text fontSize="$2" color="$gray11">
+                        Elapsed: {formatElapsed(exec.startedAt)}
+                      </Text>
+                      {exec.contextId && (
+                        <Text fontSize="$1" color="$gray9">
+                          ctx: {exec.contextId.slice(0, 8)}...
+                        </Text>
+                      )}
+                    </YStack>
+                    <XStack
+                      cursor="pointer"
+                      padding="$1"
+                      borderRadius="$3"
+                      hoverStyle={{ backgroundColor: '$red4' }}
+                      pressStyle={{ backgroundColor: '$red5' }}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        cancelExecution?.(exec.executionId);
+                      }}
+                    >
+                      <X size={16} color="$red10" />
+                    </XStack>
+                  </XStack>
+                ))}
+                {executions.length > 1 && (
+                  <XStack
+                    ai="center"
+                    jc="center"
+                    gap="$2"
+                    py="$2"
+                    mt="$1"
+                    borderTopWidth={1}
+                    borderColor="$gray4"
+                    cursor="pointer"
+                    borderRadius="$3"
+                    hoverStyle={{ backgroundColor: '$red4' }}
+                    pressStyle={{ backgroundColor: '$red5' }}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      executions.forEach(exec => cancelExecution?.(exec.executionId));
+                    }}
+                  >
+                    <StopCircle size={14} color="$red10" />
+                    <Text fontSize="$2" color="$red10" fontWeight="600">Stop all</Text>
+                  </XStack>
+                )}
+              </YStack>
+            </Popover.Content>
+          </Popover>
+        )}
+
+        <Popover key="card-menu" onOpenChange={(o) => { setMenuOpened(o); if (!o) { setLayersOpen(false); setCreating(false); setNewLayer('') } }} open={menuOpened} allowFlip={true} stayInFrame={true} placement='bottom-end'>
+          <Popover.Trigger>
+            <CardIcon Icon={MoreVertical} onPress={(e) => { e.stopPropagation(); setMenuOpened(true) }} />
+          </Popover.Trigger>
+          <Popover.Content padding={0} space={0} left={"$7"} top={"$2"} borderWidth={1} borderColor="$gray6" backgroundColor={"$gray1"}>
+            <Tinted>
+              <YStack alignItems="center" justifyContent="center" padding={"$2"} onPress={(e) => e.stopPropagation()}>
+                <YStack>
+                  {menuShortcuts.map((menu, index) => (
+                    <MenuButton key={index} text={menu.text} Icon={menu.icon} onPress={() => onEdit(menu.id)} />
+                  ))}
+
+                  {!readOnly && <XStack width="100%" height={1} backgroundColor="$gray5" marginVertical="$1.5" />}
+
+                  {!readOnly && <MenuButton text="Duplicate" Icon={Copy} onPress={() => onCopy()} />}
+
+                  {/* --- Move to layer (submenu) --- */}
+                  {!readOnly && (
+                    <Popover open={layersOpen} onOpenChange={setLayersOpen} placement="right-start" allowFlip stayInFrame>
+                      <Popover.Trigger>
+                        <XStack
+                          width="100%"
+                          borderRadius="$3"
+                          padding="$2"
+                          paddingHorizontal="$2.5"
+                          cursor="pointer"
+                          pressStyle={{ opacity: 0.7 }}
+                          hoverStyle={{ backgroundColor: "$color5" }}
+                          onPress={(e) => { e.stopPropagation(); setLayersOpen((v) => !v) }}
+                        >
+                          <LayersIcon size={14} color="var(--color9)" strokeWidth={2} />
+                          <Text marginLeft="$2" fontSize={13}>Move to layer</Text>
+                        </XStack>
+                      </Popover.Trigger>
+                      <Popover.Content
+                        padding="$1.5"
+                        gap="$1"
+                        borderWidth={1}
+                        borderColor="$gray6"
+                        backgroundColor="$gray1"
+                      >
+                        <YStack gap="$0.5">
+                          {/* Lista de capas existentes */}
+                          {layers?.map((layer: string) => {
+                            const active = (data?.layer ?? 'base') === layer
+                            return (
+                              <XStack
+                                key={layer}
+                                ai="center"
+                                jc="space-between"
+                                padding="$1.5"
+                                paddingHorizontal="$2"
+                                br="$3"
+                                f={1}
+                                w="100%"
+                                cursor="pointer"
+                                hoverStyle={{ backgroundColor: "$color5" }}
+                                pressStyle={{ opacity: 0.7 }}
+                                onPress={() => {
+                                  onMoveLayer(layer)
+                                  setLayersOpen(false)
+                                  setMenuOpened(false)
+                                  setCreating(false)
+                                  setNewLayer('')
+                                }}
+                              >
+                                <Text fontSize={13}>{layer}</Text>
+                                {active && <Check size={14} color="var(--color10)" />}
+                              </XStack>
+                            )
+                          })}
+
+                          {/* Crear nueva capa inline */}
+                          {!creating ? (
+                            <XStack
+                              ai="center"
+                              gap="$2"
+                              padding="$1.5"
+                              paddingHorizontal="$2"
+                              br="$3"
+                              cursor="pointer"
+                              hoverStyle={{ backgroundColor: "$color5" }}
+                              pressStyle={{ opacity: 0.7 }}
+                              onPress={(e) => { e.stopPropagation(); openCreate() }}
+                            >
+                              <Plus size={14} />
+                              <Text fontSize={13}>Create new layer</Text>
+                            </XStack>
+                          ) : (
+                            <XStack ai="center" gap="$2" padding="$1.5" paddingHorizontal="$2" br="$3" backgroundColor="$gray2">
+                              <Plus size={14} />
+                              <Input
+                                ref={newInputRef as any}
+                                value={newLayer}
+                                onChangeText={setNewLayer}
+                                placeholder="New layer name…"
+                                flex={1}
+                                fontSize={13}
+                                onKeyPress={(e: any) => {
+                                  if (e.key === 'Enter') confirmCreate()
+                                }}
+                              />
+                              <Button
+                                size="$2"
+                                onPress={confirmCreate}
+                                bc="$color7"
+                                color="white"
+                                hoverStyle={{ bc: "$color9" }}
+                              >
+                                Add
+                              </Button>
+                            </XStack>
+                          )}
+                        </YStack>
+                      </Popover.Content>
+                    </Popover>
+                  )}
+
+                  {!readOnly && (
+                    <MenuButton
+                      text="Add card to palette"
+                      Icon={Plus}
+                      onPress={() => {
+                        setTemplateName(data?.name ?? '')
+                        setTemplateGroup(data?.group ?? 'boards')
+                        setTemplateTag(data?.tag ?? boardName ?? 'tag')
+                        setTemplateError('')
+                        setAddTemplateDialog(true)
+                      }}
+                    />
+                  )}
+
+                  <XStack width="100%" height={1} backgroundColor="$gray5" marginVertical="$1.5" />
+
+                  <MenuButton text="Api Details" Icon={FileJson} onPress={() => onDetails()} />
+                  {data?.publicRead && (
+                    <MenuButton
+                      text="Visit public Read"
+                      Icon={Globe}
+                      onPress={() => window.open(makeReadUrl(), '_blank', 'noopener,noreferrer')}
+                    />
+                  )}
+                  {data?.publicRun && (
+                    <MenuButton
+                      text="Visit public Run"
+                      Icon={ExternalLink}
+                      onPress={() => window.open(makeRunUrl(), '_blank', 'noopener,noreferrer')}
+                    />
+                  )}
+
+                  {!readOnly && <XStack width="100%" height={1} backgroundColor="$gray5" marginVertical="$1.5" />}
+
+                  {!readOnly && <MenuButton text="Delete" Icon={Trash2} onPress={() => onDelete()} />}
+                </YStack>
+              </YStack>
+            </Tinted>
+          </Popover.Content>
+        </Popover>
+      </XStack>
+    </XStack>
+    </Tinted>
+
+    <AlertDialog
+      open={addTemplateDialog}
+      setOpen={setAddTemplateDialog}
+      title="Add card to palette"
+      acceptCaption="Create"
+      showCancel
+      hideAccept={false}
+      style={{ backgroundColor: 'var(--bgContent)' }}
+      overlayProps={{
+        onMouseDown: (e: any) => e.stopPropagation(),
+        onPointerDown: (e: any) => e.stopPropagation(),
+      }}
+      onMouseDown={(e: any) => e.stopPropagation()}
+      onPointerDown={(e: any) => e.stopPropagation()}
+      onAccept={async () => {
+        setTemplateError('');
+        const base = (templateName || 'card').trim();
+        const group = (templateGroup || 'boards').trim();
+        const tag = (templateTag || 'copytemplates').trim();
+        
+        if (!base) {
+          setTemplateError('Please enter a template name');
+          return true; // keep open
+        }
+        if (!group) {
+          setTemplateError('Please enter a group');
+          return true;
+        }
+        if (!tag) {
+          setTemplateError('Please enter a tag');
+          return true;
+        }
+
+        const fullId = `${group}.${tag}.${base}`;
+
+        const payload = {
+          defaults: {
+            type: data?.type ?? "action",
+            icon: data?.icon,
+            rulesCode: data?.rulesCode,
+            params: data?.params ?? {},
+            configParams: data?.configParams ?? {},
+            html: data?.html,
+            description: data?.description ?? "",
+            displayResponse: data?.displayResponse,
+            width: data?.width,
+            height: data?.height,
+            presets: data?.presets,
+            tokens: data?.tokens,
+            displayButton: data?.displayButton,
+            editorOptions: data?.editorOptions,
+            name: base,
+          },
+          readme: data?.readme ?? undefined,
+          name: base,
+          id: fullId,
+          group: group,
+          tag: tag,
+          templateName: base,
+        };
+        
+        const result = await API.post("/api/core/v1/cards", payload);
+        
+        if (result?.isError || result?.error) {
+          const errorMsg = result.error?.error || result.error || 'Unknown error';
+          if (errorMsg === 'Already exists') {
+            setTemplateError('A template with this name already exists');
+          } else {
+            setTemplateError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
+          }
+          return true; // keep open
+        }
+
+        setMenuOpened(false);
+        return false; // close
+      }}
+    >
+      <YStack gap="$4" width={350}>
+        <YStack gap="$2">
+          <Text fontSize="$2" color="$gray10">Group</Text>
+          <Input
+            value={templateGroup}
+            onChangeText={setTemplateGroup}
+            placeholder="Group (e.g. boards)"
+          />
+        </YStack>
+
+        <YStack gap="$2">
+          <Text fontSize="$2" color="$gray10">Tag</Text>
+          <Input
+            value={templateTag}
+            onChangeText={setTemplateTag}
+            placeholder="Tag (e.g. copytemplates)"
+          />
+        </YStack>
+
+        <YStack gap="$2">
+          <Text fontSize="$2" color="$gray10">Name</Text>
+          <Input
+            value={templateName}
+            onChangeText={setTemplateName}
+            placeholder="Template name"
+          />
+        </YStack>
+
+        {templateError && (
+          <Text color="$red10" fontSize="$3">
+            {templateError}
+          </Text>
+        )}
+      </YStack>
+    </AlertDialog>
+  </>
+}
+
+export const ActionCard = ({
+  board,
+  id,
+  displayResponse,
+  html,
+  value = undefined,
+  name,
+  title,
+  params,
+  icon = undefined,
+  color = "var(--color7)",
+  onRun = (name, params) => { },
+  onEditCode = () => { },
+  onDelete = () => { },
+  onEdit = (tab) => { },
+  onDetails = () => { },
+  onCopy = () => { },
+  readOnly = false,
+  data = {} as any,
+  states = undefined,
+  containerProps = {},
+  setData = (data, id) => { }
+}) => {
+  const [status, setStatus] = useState<'idle' | 'running' | 'error'>('idle')
+  const [executions, setExecutions] = useState<RunningExecution[]>([])
+  const [hovered, setHovered] = useState(false)
+  const lockRef = useRef(false)
+
+  const cancelExecution = async (executionId: string) => {
+    // Optimistic UI update: remove immediately from local state
+    setExecutions(prev => {
+      const updated = prev.filter(e => e.executionId !== executionId)
+      if (updated.length === 0) setStatus('idle')
+      return updated
+    })
+    try {
+      await API.post(
+        `/api/core/v1/boards/${encodeURIComponent(board.name)}/actions/${encodeURIComponent(name)}/executions/${encodeURIComponent(executionId)}/cancel`,
+        {}
+      );
+    } catch (e) {
+      console.error('Failed to cancel execution', e);
+    }
+  };
+
+  const hideTitle = data.displayTitle === false
+  const highlighted = useIsHighlightedCard(board?.name, data?.name)
+  const action = (window as any)["protoActions"]?.boards?.[board.name]?.[name]
+  const cardRef = useRef(null)
+
+  const isAutoResponsive = data?.autoResponsive !== false
+  const isCardMinimized = isAutoResponsive && (cardRef.current as any)?.offsetHeight < 200
+
+  const getValueAsString = (value: any) => {
+    if (value === undefined || value === "") return "N/A"
+    if (typeof value === "string") return value
+    return JSON.stringify(value)
+  }
+
+  const valueString = getValueAsString(value)
+  const POPOVER_MAX_HEIGHT = 500
+  const [popoverOpen, setPopoverOpen] = useState(false)
+  const [popoverPlacement, setPopoverPlacement] = useState<'top' | 'bottom'>('bottom')
+
+  useEffect(() => {
+    if (!popoverOpen) return
+    const updatePlacement = () => {
+      if (!cardRef.current || typeof window === 'undefined') return
+      const rect = (cardRef.current as any).getBoundingClientRect()
+      const viewportH = window.innerHeight
+      const spaceBelow = viewportH - rect.bottom
+      const spaceAbove = rect.top
+      const needed = POPOVER_MAX_HEIGHT + 16
+      const shouldTop = spaceBelow < needed && spaceAbove > spaceBelow
+      setPopoverPlacement(shouldTop ? 'top' : 'bottom')
+    }
+    updatePlacement()
+    window.addEventListener('resize', updatePlacement)
+    window.addEventListener('scroll', updatePlacement, true)
+    return () => {
+      window.removeEventListener('resize', updatePlacement)
+      window.removeEventListener('scroll', updatePlacement, true)
+    }
+  }, [popoverOpen])
+
+  useEffect(() => {
+    API.get(`/api/core/v1/protomemdb/executions/boards/${encodeURIComponent(board.name)}`)
+      .then((result) => {
+        if (result.isError || !result.data) return;
+        const mine = Object.values(result.data).filter(
+          (e: any) => e?.actionName === name && e?.executionId
+        ) as RunningExecution[];
+        if (mine.length > 0) {
+          setExecutions(mine);
+          setStatus('running');
+        }
+      })
+      .catch(() => {});
+  }, [board.name, name]);
+
+  useEventEffect((payload, msg) => {
+    try {
+      const parsedMessage = JSON.parse(msg.message)
+      const payload2 = parsedMessage.payload
+      const next = payload2.status
+      const execId = payload2.executionId
+
+      if (next === 'running') {
+        lockRef.current = true
+        setStatus('running')
+        if (execId) {
+          setExecutions(prev => {
+            if (prev.some(e => e.executionId === execId)) return prev
+            return [...prev, {
+              executionId: execId,
+              startedAt: payload2.startedAt || Date.now(),
+              contextId: payload2.contextId,
+            }]
+          })
+        }
+        requestAnimationFrame(() => { lockRef.current = false })
+      } else {
+        const apply = () => {
+          if (execId) {
+            setExecutions(prev => {
+              const updated = prev.filter(e => e.executionId !== execId)
+              if (updated.length === 0) {
+                if (next === 'done' || next === 'cancelled') setStatus('idle')
+                else if (next === 'error' || next === 'code_error') setStatus('error')
+              }
+              return updated
+            })
+          } else {
+            if (next === 'done' || next === 'cancelled') setStatus('idle')
+            else if (next === 'error' || next === 'code_error') { setStatus('error') }
+          }
+        }
+        if (lockRef.current) requestAnimationFrame(() => { requestAnimationFrame(apply) })
+        else apply()
+      }
+    } catch (e) { console.error(e) }
+  }, { path: "actions/boards/" + board.name + "/" + name + "/#" })
+
+  useEffect(() => {
+    if (executions.length === 0) return;
+    const STALE_MS = 10 * 60 * 1000;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setExecutions(prev => {
+        const filtered = prev.filter(e => now - e.startedAt < STALE_MS);
+        if (filtered.length === 0 && prev.length > 0) setStatus('idle');
+        return filtered;
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [executions.length]);
+
+  useEffect(() => {
+    if (!action || !action.status) return
+    setStatus(action.status)
+  }, [action?.status])
+
+  const children = useMemo(() => (
+    <ActionRunner
+      setData={setData}
+      id={id}
+      data={data}
+      displayResponse={displayResponse}
+      name={name}
+      description="Run action"
+      actionParams={params}
+      onRun={onRun}
+      icon={icon}
+      color={color}
+      html={html}
+      value={value}
+    />
+  ), [setData, id, data, displayResponse, name, params, onRun, icon, color, html, value])
+
+  const handleDoubleClick = (e: any) => {
+    // Don't open settings if double-clicking on interactive elements
+    const tagName = e.target?.tagName?.toLowerCase()
+    if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || tagName === 'button') {
+      return // Let the default behavior happen
+    }
+    e.stopPropagation()
+    onEdit(data?.editorOptions?.defaultTab ?? "params")
+  }
+
+  return (
+    <CenterCard
+      ref={cardRef}
+      highlighted={highlighted}
+      onDoubleClick={handleDoubleClick}
+      containerProps={{
+        onHoverIn: () => setHovered(true),
+        onHoverOut: () => setHovered(false),
+        onDoubleClick: handleDoubleClick,
+        backgroundColor: data.bgColor,
+        cursor: "pointer",
+        ...containerProps,
+      }}
+      status={status}
+      hideFrame={data.displayFrame === false}
+      id={id}
+      header={
+        <>
+          {(title && !hideTitle) && (
+            <XStack width="100%" btrr={9} btlr={9} mt={"$3"} h={20} ai="center" zIndex={1}>
+              <Paragraph flex={1} fontWeight="500" textOverflow={"ellipsis"} textAlign="center" overflow="hidden" whiteSpace={"nowrap"} fontSize={"$4"}>
+                {title}
+              </Paragraph>
+            </XStack>
+          )}
+          <XStack width="100%" marginTop={"$3"} height={20} alignItems="center" position="absolute" opacity={hovered ? 0.75 : 0} zIndex={999} onDoubleClick={handleDoubleClick}>
+            <CardActions
+              id={id}
+              data={data}
+              states={states}
+              onDelete={onDelete}
+              onDetails={onDetails}
+              onEdit={onEdit}
+              onEditCode={onEditCode}
+              onCopy={onCopy}
+              onMoveLayer={(layer) => { setData({ layer }, id) }}
+              readOnly={readOnly}
+              executions={executions}
+              cancelExecution={cancelExecution}
+            />
+          </XStack>
+        </>
+      }
+    >
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen} placement={`${popoverPlacement}-start`} allowFlip={false} stayInFrame>
+        <Popover.Trigger
+          cursor='pointer'
+          display={isCardMinimized ? 'flex' : 'none'}
+          className='no-drag'
+          flex={1}
+          width="100%"
+          padding="$3"
+          justifyContent="center"
+          alignItems="center"
+        >
+          <XStack gap="$2" flex={1} width="100%" height="100%" alignItems="center" justifyContent={"center"}>
+            <TooltipSimple disabled={!value} label={valueString} delay={{ open: 1000, close: 0 }} restMs={0}>
+              <Text opacity={hovered ? 0.7 : 1} flex={1} fontSize={valueString.length < 10 ? "$8" : "$6"} textAlign={"center"} fontWeight={"600"} overflow='hidden' textOverflow='ellipsis' whiteSpace='nowrap'>
+                {valueString}
+              </Text>
+            </TooltipSimple>
+            {(data.type == "action" && hovered) && (
+              <Button
+                pressStyle={{ filter: "brightness(0.95)", backgroundColor: color }}
+                hoverStyle={{ backgroundColor: color, filter: "brightness(1.1)" }}
+                backgroundColor={color}
+                position='absolute'
+                right={"$1"}
+                bottom={"$1"}
+                size="$4"
+                borderRadius="$5"
+                aspectRatio={1}
+                padding="$1"
+                enterStyle={{ opacity: 0.4 }}
+                animation="bouncy"
+                scaleIcon={1.4}
+                icon={<PublicIcon name={icon ?? "play"} />}
+                onPress={e => { e.stopPropagation(); executeAction(name, {}) }}
+              />
+            )}
+          </XStack>
+        </Popover.Trigger>
+        <Popover.Content backgroundColor="$bgPanel" borderWidth={1} borderColor="$gray6" maxHeight={500} minWidth={300} overflow='auto' alignItems='stretch'>
+          <div>{children}</div>
+        </Popover.Content>
+      </Popover>
+      {!isCardMinimized && children}
+    </CenterCard>
+  )
+}

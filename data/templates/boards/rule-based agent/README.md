@@ -1,0 +1,1 @@
+Deterministic agent with configurable rules. Reliable, fast and rigid.

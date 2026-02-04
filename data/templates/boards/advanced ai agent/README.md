@@ -1,0 +1,1 @@
+Advanced AI Agent using Claude Code with configurable plans

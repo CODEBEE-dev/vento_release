@@ -1,0 +1,21 @@
+{
+    "files": [
+        "package.json",
+        "yarn.lock",
+        "vento.js",
+        "vento.bat",
+        "vento",
+        ".yarnrc.yml",
+        ".gitignore",
+        ".gitattributes",
+        ".dockerignore",
+        ".yarn/patches",
+        ".yarn/plugins",
+        ".yarn/releases"
+    ],
+    "mkdir": [
+        "bin",
+        "logs"
+    ],
+    "cleanPackageJson": true
+}

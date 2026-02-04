@@ -1,0 +1,23 @@
+{
+    "name": "protobase",
+    "version": "1.0.0",
+    "description": "Shared library with base technologies for any js environment",
+    "main": "dist/index.js",
+    "types": "src/index.ts",
+    "scripts": {
+        "build": "node build.js"
+    },
+    "files": [
+        "dist"
+    ],
+    "dependencies": {
+        "bcryptjs": "3.0.2",
+        "handlebars": "4.7.8",
+        "jsonwebtoken": "^9.0.2",
+        "moment": "2.29.4",
+        "pino": "9.2.0",
+        "pino-pretty": "11.2.1",
+        "typescript": "5.8.2",
+        "zod": "^3.22.2"
+    }
+}

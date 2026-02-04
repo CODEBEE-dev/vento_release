@@ -1,0 +1,55 @@
+#!/bin/sh
+# Vento launcher script
+# Usage:
+#   ./vento           - Run yarn install + yarn start
+#   ./vento -fast     - Run yarn start-fast (skip install)
+#   ./vento dev       - Run in development mode (yarn install + dev)
+#   ./vento dev-fast  - Run in development mode (skip install)
+#   ./vento kill      - Stop all processes
+#   ./vento --help    - Show help
+
+cd "$(dirname "$0")"
+
+# Detect node: prefer local bin/node, fallback to system
+if [ -x "./bin/node" ]; then
+    NODE="./bin/node"
+    echo "Using local node: $NODE"
+else
+    NODE="node"
+    echo "Using system node: $(which node)"
+fi
+
+YARN="$NODE .yarn/releases/yarn-4.1.0.cjs"
+
+case "$1" in
+    --help|-h)
+        $NODE vento.js --help
+        ;;
+    dev)
+        $YARN && $YARN dev
+        ;;
+    dev-fast)
+        $YARN dev-fast
+        ;;
+    -fast)
+        $YARN start-fast
+        ;;
+    kill)
+        $YARN kill
+        ;;
+    add-user)
+        if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
+            echo "Usage: ./vento add-user <email> <password> <type>"
+            exit 1
+        fi
+        # Use absolute path for local node, or just 'node' for system
+        if [ -x "./bin/node" ]; then
+            (cd apps/vento && ../../bin/node addUser.js "$2" "$3" "$4")
+        else
+            (cd apps/vento && node addUser.js "$2" "$3" "$4")
+        fi
+        ;;
+    *)
+        $YARN && $YARN start
+        ;;
+esac

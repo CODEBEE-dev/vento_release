@@ -1,0 +1,20 @@
+{
+    "name": "purple",
+    "format": [
+        "json",
+        "css"
+    ],
+    "config": {
+        "themes": {
+            "dark": {
+                "bgPanel": "#353244",
+                "bgContent": "#292636"
+            },
+            "light": {
+                "bgPanel": "#E3DEF3",
+                "bgContent": "#F1EBFA"
+            }
+        }
+    },
+    "accent": "purple"
+}

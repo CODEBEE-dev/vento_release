@@ -1,0 +1,23 @@
+{
+  "defaultHomeserver": 0,
+  "homeserverList": [
+    "http://localhost:8000"
+  ],
+  "allowCustomHomeservers": true,
+
+  "featuredCommunities": {
+    "openAsDefault": false,
+    "spaces": [],
+    "rooms": [],
+    "servers": []
+  },
+
+  "hashRouter": {
+    "enabled": false,
+    "basename": "/"
+  },
+
+  "features": {
+    "presence": true
+  }
+}

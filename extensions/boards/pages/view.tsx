@@ -1,0 +1,1805 @@
+import { Copy, Plus, Settings, X, Book, Activity, Bot, Presentation, FileClock, Router, Radio, UploadCloud, Bug } from '@tamagui/lucide-icons'
+import { API, getPendingResult, set } from 'protobase'
+import { AdminPage } from "protolib/components/AdminPage"
+import { useIsAdmin } from "protolib/lib/useIsAdmin"
+import { useHasPermission } from 'protolib/lib/usePermission'
+import ErrorMessage from "protolib/components/ErrorMessage"
+import { YStack, XStack, Paragraph, Text, Button as TamaButton, Dialog, Theme, Spinner, Stack, H1, H3, Button } from '@my/ui'
+import { computeLayout } from '@extensions/autopilot/layout';
+import { DashboardGrid, gridSizes, getCurrentBreakPoint } from 'protolib/components/DashboardGrid';
+import { LogPanel } from 'protolib/components/LogPanel';
+import { AlertDialog } from 'protolib/components/AlertDialog';
+import { CenterCard, HTMLView } from '@extensions/services/widgets'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
+import { useEffectOnce, useUpdateEffect } from 'usehooks-ts'
+import { Tinted } from 'protolib/components/Tinted'
+import { useProtoStates } from '@extensions/protomemdb/lib/useProtoStates'
+import { CardSelector } from 'protolib/components/board/CardSelector'
+import { ActionCardSettings } from 'protolib/components/autopilot/ActionCardSettings'
+import { useThemeSetting } from '@tamagui/next-theme'
+import { IconContainer } from 'protolib/components/IconContainer'
+import { usePageParams } from 'protolib/next'
+import { usePendingEffect } from 'protolib/lib/usePendingEffect'
+import { createParam } from 'solito'
+import { AsyncView } from 'protolib/components/AsyncView'
+import { Center } from 'protolib/components/Center'
+import dynamic from 'next/dynamic'
+
+const Monaco = dynamic(() => import('protolib/components/Monaco').then(m => m.Monaco), {
+  ssr: false,
+  loading: () => <Spinner />
+})
+
+import { BoardControlsProvider, useBoardControls } from '../BoardControlsContext'
+import { BoardSettingsEditor } from '../components/BoardSettingsEditor'
+import { JSONView } from 'protolib/components/JSONView'
+import { FloatingWindow } from '../components/FloatingWindow'
+import { useAtom } from 'protolib/lib/Atom'
+import { AppState } from 'protolib/components/AdminPanel'
+import { useLog } from '@extensions/logs/hooks/useLog'
+import { useBoardLayer, useBoardVersion, useBoardVersionId, useLayers } from '@extensions/boards/store/boardStore'
+import { useBoardVisualUI } from '../useBoardVisualUI'
+import { scrollToAndHighlight } from '../utils/animations'
+import { useAtom as useJotaiAtom } from 'jotai'
+import { itemsAtom, automationInfoAtom, uiCodeInfoAtom, reloadBoard } from '../utils/viewUtils'
+import { ActionCard } from '../components/ActionCard'
+import { VersionTimeline } from '../VersionTimeline'
+import { useBoardVersions, latestVersion } from '../utils/versions'
+import { GraphView, EdgeDeleteInfo, EdgeCreateInfo } from './graphView'
+import { useEventEffect } from '@extensions/events/hooks'
+import { getUIPreferences, mergeUIPreferences } from '../utils/uiPreferences'
+import { ItemMenu } from 'protolib/components/ItemMenu'
+import { DevicesModel } from '@extensions/devices/devices/devicesSchemas'
+import { useEsphomeDeviceActions } from '@extensions/esphome/hooks/useEsphomeDeviceActions'
+import { SubsystemsEditor } from 'protodevice/src/SubsystemEditor'
+import { Subsystems } from 'protodevice/src/Subsystem'
+import { TemplateEditor, useTemplateEditor } from '@extensions/devices/components/TemplateEditor'
+import { ButtonSimple } from 'protolib/components/ButtonSimple'
+
+const defaultCardMethod: "post" | "get" = 'post'
+
+class ValidationError extends Error {
+  errors: string[];
+
+  constructor(errors: string[]) {
+    super(errors.join('\n'));
+    this.name = 'ValidationError';
+    this.errors = errors;
+  }
+}
+
+const saveBoard = async (boardId, data, setBoardVersion?, refresh?, opts = { bumpVersion: true }) => {
+  if (__currentBoardVersion !== data.version) {
+    console.error("Cannot save board, the board version has changed, please refresh the board.")
+    return
+  }
+
+  try {
+    if (opts.bumpVersion) {
+      if (!data.version) {
+        data.version = 1
+      } else {
+        const last = await latestVersion(boardId);
+        data.version = last + 1;
+      }
+      data.savedAt = Date.now()
+    }
+    await API.post(`/api/core/v1/boards/${boardId}`, data);
+    if (opts.bumpVersion && refresh) {
+      refresh();
+    }
+    setBoardVersion && setBoardVersion(data.version)
+  } catch (error) {
+    console.error("Error saving board:", error);
+  }
+};
+
+const checkCard = async (cards, newCard) => {
+  const errors = []
+  //console.log("cards: ", cards)
+  //console.log("newCard: ", newCard)
+  const existingCard = cards.find(item => item.name === newCard.name && item.key !== newCard.key);
+  if (existingCard) {
+    console.error('A card with the same name already exists')
+    errors.push('A card with the same name already exists')
+  }
+  if (newCard.name === '') {
+    console.error('Card name cannot be empty')
+    errors.push('Card name cannot be empty')
+  }
+  const regex = /^[a-zA-Z0-9-_ ]*$/;
+  if (!regex.test(newCard.name)) {
+    console.error("Invalid name, only letters, numbers, spaces, - and _ are allowed.")
+    errors.push("Invalid name, only letters, numbers, spaces, - and _ are allowed.")
+  }
+  if (errors.length > 0) {
+    throw new ValidationError(errors);
+  }
+}
+
+const generate_random_id = () => {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
+const { useParams } = createParam()
+
+const RulesSideMenu = dynamic(() => import('protolib/components/autopilot/RulesSideMenu').then(mod => mod.RulesSideMenu), { ssr: false })
+const UISideMenu = dynamic(() => import('protolib/components/autopilot/UISideMenu').then(mod => mod.UISideMenu), { ssr: false })
+
+const FileWidget = dynamic<any>(() =>
+  import('protolib/adminpanel/features/components/FilesWidget').then(module => module.FileWidget),
+  { loading: () => <Tinted><Center><Spinner size='small' color="$color7" scale={4} /></Center></Tinted> }
+);
+
+
+// Memoized ActionCard to prevent unnecessary re-renders
+const GraphActionCard = memo(ActionCard, (prev, next) => {
+  return prev.data === next.data
+    && prev.value === next.value
+    && prev.states === next.states
+    && prev.html === next.html
+    && prev.displayResponse === next.displayResponse
+    && prev.name === next.name
+    && prev.color === next.color
+    && prev.icon === next.icon
+    && prev.readOnly === next.readOnly;
+});
+
+const getExecuteAction = (board, rawActions) => {
+  const actions = []
+  const flatten = (obj, path) => {
+    if (!obj || typeof obj !== 'object') {
+      return
+    }
+    if (obj.url) {
+      actions.push({ ...obj, path: path })
+    } else {
+      for (const key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          flatten(obj[key], path + '/' + key)
+        }
+      }
+    }
+  }
+  flatten(rawActions, '')
+
+  return async (url_or_name, params = {}) => {
+    console.log('Executing action: ', url_or_name, params);
+    const action = actions.find(a => a.url === url_or_name || (a.name === url_or_name && a.path == '/boards/' + board + '/' + a.name));
+    if (!action) {
+      console.error('Action not found: ', url_or_name);
+      return;
+    }
+
+    console.log('Action: ', action)
+
+    if (action.receiveBoard) {
+      params.board = board.name
+    }
+    //check if the action has configParams and if it does, check if the param is visible
+    //if the param is not visible, hardcode the param value to the value in the configParams defaultValue
+    if (action.configParams) {
+      for (const param in action.configParams) {
+        if (action.configParams[param]?.visible === false && action.configParams[param]?.defaultValue != '') {
+          params[param] = action.configParams[param].defaultValue
+        }
+      }
+    }
+
+    if (action.method === 'post') {
+      let { token, ...data } = params;
+      //console.log('url: ', action.url+'?token='+token)
+      const response = await API.post(action.url, data);
+      if (response.isError) {
+        throw new Error(JSON.stringify(response.error || 'Error executing action'));
+      }
+      return response.data
+    } else {
+      const paramsStr = Object.keys(params).map(k => k + '=' + params[k]).join('&');
+      //console.log('url: ', action.url+'?token='+token+'&'+paramsStr)
+      const response = await API.get(action.url + '?' + paramsStr);
+      if (response.isError) {
+        throw new Error(JSON.stringify(response.error || 'Error executing action'));
+      }
+      return response.data
+    }
+  }
+}
+
+const BoardStateView = ({ board }) => {
+  const states = useProtoStates({}, 'states/boards/' + board.name + '/#', 'states')
+  const data = states?.boards?.[board.name]
+  return <XStack p={"$4"} flex={1} flexDirection="column" gap="$4" overflow="auto">
+    {data && <JSONView src={data ?? {}} />}
+    {!data && <Center>
+      <Paragraph size="$8" o={0.4}>No states found for this board</Paragraph>
+    </Center>}
+  </XStack>
+}
+
+type DeviceActions = {
+  uploadConfigFile: (device: DevicesModel, yamlOverride?: string) => Promise<void>;
+  flashDevice: (device: DevicesModel, yamlOverride?: string) => Promise<void>;
+  viewLogs: (device: DevicesModel) => Promise<void>;
+};
+
+const DeviceListItem = ({ device, actions, onSelect, templateEditor }: { device: DevicesModel, actions: DeviceActions, onSelect: (device: DevicesModel) => void, templateEditor: ReturnType<typeof useTemplateEditor> }) => {
+  const [subsystemsEditor, setSubsystemsEditor] = useState<{ open: boolean, device: DevicesModel | null }>({ open: false, device: null });
+  const hasDefinition = Boolean(device.data?.deviceDefinition);
+  const isEsphome = device.data?.platform === 'esphome';
+  const canUpdateDevice = useHasPermission('devices.update');
+
+  const extraMenuActions = [
+    {
+      text: "Edit subsystems",
+      icon: Radio,
+      action: (element: DevicesModel) => setSubsystemsEditor({ open: true, device: element }),
+      isVisible: () => canUpdateDevice
+    },
+    {
+      text: "Upload definition",
+      icon: UploadCloud,
+      action: async (element: DevicesModel) => { await actions.flashDevice(element); },
+      isVisible: (element: DevicesModel) => Boolean(element.data?.deviceDefinition)
+    },
+    {
+      text: "Upload config file",
+      icon: UploadCloud,
+      action: async (element: DevicesModel) => { await actions.uploadConfigFile(element); },
+      isVisible: (element: DevicesModel) => Boolean(element.getConfigFile()) && !element.data?.deviceDefinition
+    },
+    {
+      text: "View logs",
+      icon: Bug,
+      action: async (element: DevicesModel) => { await actions.viewLogs(element); },
+      isVisible: (element: DevicesModel) => Boolean(element.getLogs())
+    },
+  ];
+
+  return (
+    <>
+      <Tinted>
+        <XStack ai="center" px="$3" py="$2" bg="$bgContent" br="$3" gap="$3" bw={1} boc="$gray5" jc="space-between">
+          <XStack ai="center" gap="$3" onPress={() => onSelect(device)} cursor="pointer" flex={1}>
+            <Router size={16} />
+            <Text>{device?.data?.name ?? 'Unknown device'}</Text>
+          </XStack>
+          <XStack ai="center" gap="$2">
+            {isEsphome && (
+              <>
+                <ButtonSimple
+                  onPress={async (e) => {
+                    e.stopPropagation();
+                    if (!hasDefinition) {
+                      await actions.uploadConfigFile(device);
+                      return;
+                    }
+                    await actions.flashDevice(device);
+                  }}
+                >
+                  Upload
+                </ButtonSimple>
+                <ButtonSimple
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    templateEditor.openDevice(device.data.name);
+                  }}
+                >
+                  Edit
+                </ButtonSimple>
+              </>
+            )}
+            <ItemMenu
+              type="item"
+              sourceUrl="/api/core/v1/devices"
+              element={device}
+              deleteable={() => false}
+              hideDeleteButton
+              extraMenuActions={extraMenuActions}
+            />
+          </XStack>
+        </XStack>
+      </Tinted>
+      <SubsystemsEditor
+        open={subsystemsEditor.open}
+        deviceName={subsystemsEditor.device?.data?.name}
+        subsystems={subsystemsEditor.device?.data?.subsystem ?? []}
+        onClose={() => setSubsystemsEditor({ open: false, device: null })}
+      />
+    </>
+  );
+};
+
+const DevicesTab = ({ devices, actions }: { devices: string[], actions: DeviceActions }) => {
+  const list = Array.isArray(devices) ? devices.filter(Boolean) : [];
+  const [loading, setLoading] = useState(false);
+  const [deviceMap, setDeviceMap] = useState<Record<string, DevicesModel | null>>({});
+  const [selected, setSelected] = useState<DevicesModel | null>(null);
+  const templateEditor = useTemplateEditor();
+  const canUpdateDevice = useHasPermission('devices.update');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const entries = await Promise.all(list.map(async (name) => {
+          try {
+            const res = await API.get(`/api/core/v1/devices/${encodeURIComponent(name)}`);
+            if (!res?.isError && res?.data) {
+              return [name, DevicesModel.load(res.data)];
+            }
+          } catch (err) { }
+          return [name, null];
+        }));
+        if (!cancelled) {
+          setDeviceMap(Object.fromEntries(entries));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    if (list.length) load(); else setDeviceMap({});
+    return () => { cancelled = true; };
+  }, [JSON.stringify(list)]);
+
+  return (
+    <YStack f={1} padding="$4" gap="$3">
+      <XStack ai="center" jc="space-between">
+        <Paragraph size="$5" fow="600">Linked devices</Paragraph>
+        <Button size="$2" onPress={() => { window.location.href = '/workspace/devices'; }}>
+          Go to devices page
+        </Button>
+      </XStack>
+      {selected ? (
+        <YStack gap="$3">
+          <XStack ai="center" jc="space-between">
+            <XStack ai="center" gap="$3">
+              <Button size="$2" onPress={() => setSelected(null)}>Back</Button>
+              <Text fontWeight="700">{selected.data?.name}</Text>
+            </XStack>
+            <ItemMenu
+              type="item"
+              sourceUrl="/api/core/v1/devices"
+              element={selected}
+              deleteable={() => false}
+              hideDeleteButton
+              extraMenuActions={[
+                {
+                  text: "Edit subsystems",
+                  icon: Radio,
+                  action: (element: DevicesModel) => setSelected(element), // no-op; subsystems already shown
+                  isVisible: () => canUpdateDevice
+                },
+                {
+                  text: "View logs",
+                  icon: Bug,
+                  action: async (element: DevicesModel) => { await actions.viewLogs(element); },
+                  isVisible: (element: DevicesModel) => Boolean(element.getLogs())
+                },
+              ]}
+            />
+          </XStack>
+          <Tinted>
+            <Subsystems subsystems={selected.data?.subsystem ?? []} deviceName={selected.data?.name} />
+          </Tinted>
+        </YStack>
+      ) : list.length === 0 ? (
+        <Paragraph color="$gray9">No devices linked to this board yet.</Paragraph>
+      ) : loading ? (
+        <Paragraph color="$gray9">Loading devices…</Paragraph>
+      ) : (
+        <YStack gap="$2">
+          {list.map((dev) => {
+            const deviceModel = deviceMap[dev];
+            return deviceModel ? (
+              <DeviceListItem key={dev} device={deviceModel} actions={actions} onSelect={(d) => setSelected(d)} templateEditor={templateEditor} />
+            ) : (
+              <Tinted key={dev}>
+                <XStack ai="center" px="$3" py="$2" bg="$bgContent" br="$3" gap="$3" bw={1} boc="$gray5">
+                  <Router size={16} />
+                  <Text>{dev} (not found)</Text>
+                </XStack>
+              </Tinted>
+            );
+          })}
+        </YStack>
+      )}
+      <TemplateEditor {...templateEditor.editorProps} />
+    </YStack>
+  );
+};
+
+const MAX_BUFFER_MSG = 1000
+const FloatingArea = ({ tabVisible, setTabVisible, board, automationInfo, boardRef, actions, states, uicodeInfo, setUICodeInfo, onEditBoard, deviceActions, readOnly }) => {
+  const { panelSide, setPanelSide } = useBoardControls() || {};
+  const [logs, setLogs] = useState([])
+  useLog((log) => {
+    setLogs(prev => {
+      const newBuffer = [log, ...prev]
+      if (newBuffer.length > MAX_BUFFER_MSG) {
+        return newBuffer.slice(0, MAX_BUFFER_MSG)
+      }
+      return newBuffer
+    })
+  })
+
+  const showHistory = true
+  const tabs = {
+    "states": {
+      "label": "States",
+      "icon": Book,
+      "content": <BoardStateView board={board} />
+    },
+    "rules": {
+      "label": "Automation",
+      "icon": Bot,
+      "content": <XStack flex={1} padding={"$3"}>
+        {automationInfo && <RulesSideMenu
+          automationInfo={automationInfo}
+          boardRef={boardRef}
+          board={board}
+          actions={actions}
+          states={states}
+          readOnly={readOnly}
+        />}
+      </XStack>
+    },
+    "uicode": {
+      "label": "Presentation",
+      "icon": Presentation,
+      "content": <>
+        {uicodeInfo && <UISideMenu
+          onChange={(code) => {
+            setUICodeInfo({ code });
+          }}
+          uiCode={uicodeInfo}
+          boardRef={boardRef}
+          board={board}
+          actions={actions}
+          states={states}
+          readOnly={readOnly}
+        />}
+      </>
+    },
+    "logs": {
+      "label": "Logs (" + logs.length + ")",
+      "icon": Activity,
+      "content": <LogPanel AppState={AppState} logs={logs} setLogs={setLogs} />
+    },
+    ...(showHistory && {
+      history: {
+        label: "History",
+        icon: FileClock,
+        content: <VersionTimeline boardId={board.name} />
+      }
+    }),
+    "devices": {
+      "label": "Devices",
+      "icon": Router,
+      "content": <DevicesTab devices={board.devices ?? []} actions={deviceActions} />
+    },
+    "board-settings": {
+      "label": "Settings",
+      "icon": Settings,
+      "content": <BoardSettingsEditor
+        board={board}
+        readOnly={readOnly}
+        onSave={(updatedBoard) => {
+          boardRef.current = updatedBoard;
+          onEditBoard();
+        }}
+      />
+    }
+  }
+
+  return <FloatingWindow
+    key={`fw-${panelSide}`}
+    visible={Object.keys(tabs).includes(tabVisible)}
+    selectedTab={tabVisible}
+    onChangeTab={setTabVisible}
+    tabs={tabs}
+    side={panelSide}
+    onToggleSide={() => setPanelSide(panelSide === 'right' ? 'left' : 'right')}
+    leftAnchorSelector="#app-sidemenu"
+    leftAnchorGap={40}
+  />
+}
+
+
+
+export const Board = ({ board, icons, forceViewMode = undefined }: { board: any, icons: any[], forceViewMode?: 'ui' | 'board' | 'graph' }) => {
+  let {
+    addOpened,
+    setAddOpened,
+    tabVisible,
+    setTabVisible,
+    viewMode
+  } = useBoardControls() ?? {};
+
+  const effectiveView: 'ui' | 'board' | 'graph' =
+    (forceViewMode ?? viewMode ?? 'ui') as 'ui' | 'board' | 'graph';
+
+  const permissionsRaw = typeof board?.userPermissions === 'string'
+    ? board.userPermissions.toLowerCase()
+    : 'rw';
+  const permissions = permissionsRaw === 'w' ? 'rw' : permissionsRaw;
+  // Check both per-board permissions AND global boards.update permission
+  const hasGlobalUpdatePermission = useHasPermission('boards.update');
+  const canWrite = permissions === 'rw' && hasGlobalUpdatePermission;
+  const showReadOnlyBadge = !canWrite && (effectiveView === 'board' || effectiveView === 'graph');
+
+  window['board'] = board;
+
+  const breakpointCancelRef = useRef(null) as any
+  const dedupRef = useRef() as any
+  const initialized = useRef(false)
+
+  const [items, setItems] = useState(board.cards && board.cards.length ? board.cards : []);
+  const [boardCode, setBoardCode] = useState(JSON.stringify(board))
+  const [graphLayout, setGraphLayout] = useState(board?.graphLayout ?? {});
+  const graphLayoutRef = useRef(graphLayout);
+  const graphLayoutBoardRef = useRef<string | null>(board?.name ?? null);
+  const layoutsEqual = useCallback((a: any, b: any) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const k of aKeys) {
+      const av = a[k]; const bv = b[k];
+      if (!bv) return false;
+      if (av.x !== bv.x || av.y !== bv.y || av.layer !== bv.layer || av.parent !== bv.parent || av.type !== bv.type) return false;
+    }
+    return true;
+  }, []);
+
+  useEffect(() => {
+    setItems(board.cards && board.cards.length ? board.cards : []);
+    setBoardCode(JSON.stringify(board));
+    const incomingLayout = board?.graphLayout ?? {};
+    const boardChanged = graphLayoutBoardRef.current !== board?.name;
+    const hasLocalLayout = Object.keys(graphLayoutRef.current || {}).length > 0;
+    if (boardChanged || !hasLocalLayout) {
+      if (!layoutsEqual(graphLayoutRef.current, incomingLayout)) {
+        setGraphLayout(incomingLayout);
+        graphLayoutRef.current = incomingLayout;
+      }
+    }
+    graphLayoutBoardRef.current = board?.name ?? null;
+    window['board'] = board;
+  }, [board, layoutsEqual])
+
+  const [availableLayers, setLayers] = useLayers();
+  const [activeLayer, setActiveLayer] = useBoardLayer();
+  const persistLayerBoardRef = useRef<string | null>(null);
+  const activeLayerRef = useRef(activeLayer);
+  activeLayerRef.current = activeLayer;
+
+  useEffect(() => {
+    const set = new Set<string>(["base"]);               // 👈 siempre incluimos base
+    for (const c of items) set.add(c.layer ?? "base");
+
+    const sorted = Array.from(set).sort((a, b) =>
+      a === "base" ? -1 : b === "base" ? 1 : a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+    setLayers(sorted);
+  }, [items, setLayers]);
+
+  const [globalItems, setGlobalItems] = useJotaiAtom(itemsAtom)
+  const [automationInfo, setAutomationInfo] = useJotaiAtom(automationInfoAtom);
+  const [uicodeInfo, setUICodeInfo] = useJotaiAtom(uiCodeInfoAtom);
+  if (!initialized.current) {
+    setItems(board.cards && board.cards.length ? board.cards : [])
+    setAutomationInfo(null)
+    setUICodeInfo(null)
+    initialized.current = true
+  }
+
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isApiDetails, setIsApiDetails] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [showRelayoutConfirm, setShowRelayoutConfirm] = useState(false);
+  const [currentCard, setCurrentCard] = useState(null)
+  const [pendingDeleteNames, setPendingDeleteNames] = useState<string[]>([])
+  const [editedCard, setEditedCard] = useState(null)
+  const [editCode, setEditCode] = useState('')
+  const [originalCardJson, setOriginalCardJson] = useState<string | null>(null);
+
+  const [hasChanges, setHasChanges] = useState(false);
+
+  const [errors, setErrors] = useState<string[]>([])
+  const [selectedNames, setSelectedNames] = useState<string[]>([])
+  const selectedNamesRef = useRef<string[]>([])
+  selectedNamesRef.current = selectedNames;
+  // const initialBreakPoint = useInitialBreakpoint()
+  const breakpointRef = useRef('') as any
+  const { query, removeReplace, push } = usePageParams({})
+  const isJSONView = query.json == 'true'
+  const [appState, setAppState] = useAtom(AppState)
+
+  const [tab, setTab] = useState('config')
+
+  const [addKey, setAddKey] = useState(0)
+
+  const { resolvedTheme } = useThemeSetting()
+
+
+
+  const visualui = useBoardVisualUI({
+    boardID: tabVisible == "visualui" ? board.name : null,
+    onDismiss: () => setTabVisible(""),
+    onAfterSave: ({ code }) => {
+      setUICodeInfo({ code })
+      setTabVisible("")
+    },
+  })
+
+  const states = useProtoStates({}, 'states/boards/' + board.name + '/#', 'states')
+
+
+  const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const nextDuplicatedName = (existingNames: string[], currentName: string) => {
+    const base = currentName.replace(/(?:\s*_)?\d+$/, '');
+    const re = new RegExp(`^${escapeRegExp(base)}(?:_(\\d+))?$`);
+
+    const maxN = existingNames.reduce((max, name) => {
+      const m = name.match(re);
+      if (!m) return max;
+      const n = m[1] ? parseInt(m[1], 10) : 1;
+      return Math.max(max, n);
+    }, 0);
+
+    return `${base}_${maxN + 1}`;
+  };
+
+  useEffect(() => {
+    if (globalItems && globalItems.length) {
+      setItems(globalItems)
+    }
+  }, [globalItems])
+
+  useEffect(() => {
+    selectedNamesRef.current = selectedNames;
+  }, [selectedNames])
+
+  useUpdateEffect(() => {
+    if (addOpened) {
+      setErrors([]);
+    }
+  }, [addOpened]);
+
+  useUpdateEffect(() => {
+    if (isEditing) {
+      setErrors([]);
+    }
+  }, [isEditing]);
+
+  const [boardVersion, setBoardVersion] = useBoardVersion()
+  const { refresh } = useBoardVersions(board.name);
+  const boardRef = useRef(board)
+  const {
+    uploadConfigFile,
+    flashDevice,
+    viewLogs,
+    ui: deviceActionsUi,
+  } = useEsphomeDeviceActions();
+
+  const deviceActions: DeviceActions = {
+    uploadConfigFile,
+    flashDevice,
+    viewLogs,
+  };
+
+  //@ts-ignore store the states in the window object to be used in the cards htmls
+  window['protoStates'] = states
+
+  //@ts-ignore 
+  window['protoBoardName'] = board.name
+
+  //@ts-ignore emit an event to notify the states have changed
+  window.dispatchEvent(new CustomEvent('protoStates:update', { detail: { board: board.name } }))
+
+  //@ts-ignore store the actions in the window object to be used in the cards htmls
+  const actions = useProtoStates({}, 'actions/boards/' + board.name + '/#', 'actions')
+  window['protoActions'] = actions
+
+  const getParsedJSON = (rawJson) => {
+    let result = rawJson
+    try {
+      const parsed = JSON.parse(rawJson)
+      result = JSON.stringify(parsed, null, 2)
+    } catch (err) { }
+
+    return result
+  }
+
+  useEffect(() => {
+    window['executeAction'] = async (card, params) => {
+      return await window['onRunListeners'][card](card, params);
+    };
+
+    window['executeActionForm'] = async (event, card) => {
+      //This allows to call the action from <ActtionRunner />
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      const params = Object.fromEntries(formData['entries']());
+
+      const cleanedParams = {};
+      for (const key in params) {
+        if (params[key] || params[key] === "0") {
+          cleanedParams[key] = params[key];
+        }
+      }
+
+      return await window['onRunListeners'][card](card, cleanedParams);
+    };
+
+  }, [])
+
+  // Relayout event listener - opens confirmation dialog
+  useEffect(() => {
+    const handleRelayout = () => {
+      setShowRelayoutConfirm(true);
+    };
+    window.addEventListener('board:relayout', handleRelayout);
+    return () => window.removeEventListener('board:relayout', handleRelayout);
+  }, [])
+
+  const executeRelayout = () => {
+    setGraphLayout({});
+    graphLayoutRef.current = {};
+    boardRef.current.graphLayout = {};
+    API.post(`/api/core/v1/boards/${board.name}/graphlayout`, { graphLayout: {} }).catch((error) => {
+      console.error('Error clearing graph layout:', error);
+    });
+  };
+
+  useEffect(() => {
+    window['execute_action'] = getExecuteAction(board.name, actions)
+    window['setCardData'] = (cardId, key, value) => {
+      setItems(prevItems => {
+        const card = prevItems.some(item => item.key === cardId);
+        if (card) {
+          const newItems = prevItems.map(item => {
+            if (item.key === cardId) {
+              return { ...item, [key]: value };
+            }
+            return item;
+          });
+
+          board.cards = newItems;
+          saveBoard(board.name, board, setBoardVersion, refresh)
+          return newItems;
+        } else {
+          console.error('Card not found:', cardId);
+          return prevItems;
+        }
+      })
+    }
+  }, [actions])
+
+  useEffectOnce(() => {
+    reloadBoard(board.name, setItems, setBoardVersion, setAutomationInfo, setUICodeInfo)
+  })
+
+  useEffect(() => {
+    boardRef.current.cards = items
+  }, [items])
+
+  useEffect(() => {
+    boardRef.current.graphLayout = graphLayout
+    graphLayoutRef.current = graphLayout
+  }, [graphLayout])
+
+  const persistGraphLayout = useCallback((nextLayout) => {
+    const safeLayout = nextLayout || {};
+    if (layoutsEqual(safeLayout, graphLayoutRef.current)) return;
+    if (__currentBoardVersion !== boardRef.current?.version) {
+      console.error("Cannot save graph layout, the board version has changed, please refresh the board.");
+      return;
+    }
+    graphLayoutRef.current = safeLayout;
+    setGraphLayout(safeLayout);
+    boardRef.current.graphLayout = safeLayout;
+    API.post(`/api/core/v1/boards/${board.name}/graphlayout`, { graphLayout: safeLayout }).catch((error) => {
+      console.error('Error saving graph layout:', error);
+    });
+  }, [board.name, layoutsEqual]);
+
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+
+  useEffect(() => {
+    if (!board?.name) return;
+    const preferredLayer = getUIPreferences(board.name).layer;
+    const targetLayer =
+      preferredLayer && availableLayers.includes(preferredLayer) ? preferredLayer : 'base';
+    const currentLayer = activeLayerRef.current;
+    if (!targetLayer || targetLayer === currentLayer) return;
+    setActiveLayer(targetLayer);
+  }, [board?.name, availableLayers, setActiveLayer]);
+
+  useEffect(() => {
+    if (!board?.name || !activeLayer) return;
+    const boardChanged = persistLayerBoardRef.current !== board.name;
+    persistLayerBoardRef.current = board.name;
+    if (boardChanged) return;
+    const storedLayer = getUIPreferences(board.name).layer ?? 'base';
+    if (storedLayer === activeLayer) return;
+    mergeUIPreferences(board.name, { layer: activeLayer });
+  }, [board?.name, activeLayer]);
+
+
+  const deleteCard = async (card) => {
+    if (!canWrite) return;
+    const newItems = items.filter(item => item.key != card.key)
+    // if (newItems.length == 0) newItems.push(addCard) // non necessary
+    setItems(newItems)
+    boardRef.current.cards = newItems
+    await saveBoard(board.name, boardRef.current, setBoardVersion, refresh)
+    setIsDeleting(false)
+    setCurrentCard(null)
+  }
+
+  const deleteCardsByName = useCallback(async (targets: string[]) => {
+    if (!canWrite) return;
+    if (!targets.length) return;
+
+    const targetSet = new Set(targets);
+    
+    // Filter out deleted cards AND clean up links pointing to deleted cards
+    const newItems = items
+      .filter((item) => !targetSet.has(item.name))
+      .map((item) => {
+        // Remove links that point to deleted cards
+        if (item.links?.length) {
+          const cleanedLinks = item.links.filter((link: any) => !targetSet.has(link.name));
+          if (cleanedLinks.length !== item.links.length) {
+            return { ...item, links: cleanedLinks };
+          }
+        }
+        return item;
+      });
+    
+    if (newItems.length === items.length && 
+        !items.some(item => item.links?.some((link: any) => targetSet.has(link.name)))) {
+      return;
+    }
+
+    setItems(newItems);
+    boardRef.current.cards = newItems;
+
+    const nextLayout = { ...(graphLayoutRef.current || {}) };
+    let layoutChanged = false;
+    targets.forEach((name) => {
+      if (nextLayout[name]) {
+        delete nextLayout[name];
+        layoutChanged = true;
+      }
+    });
+    if (layoutChanged) {
+      setGraphLayout(nextLayout);
+      graphLayoutRef.current = nextLayout;
+      boardRef.current.graphLayout = nextLayout;
+    }
+
+    // Clear selection after delete to avoid keeping stale ids
+    setSelectedNames([]);
+    selectedNamesRef.current = [];
+    setPendingDeleteNames([]);
+    setCurrentCard(null);
+
+    await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+  }, [items, board.name, setBoardVersion, refresh, canWrite]);
+
+  // Delete edges (links) between cards
+  const deleteEdges = useCallback(async (edgesToDelete: EdgeDeleteInfo[]) => {
+    if (!canWrite) return;
+    if (!edgesToDelete.length) return;
+
+    let changed = false;
+    const newItems = items.map(item => {
+      // Find edges where this card is the source
+      const edgesFromThisCard = edgesToDelete.filter(e => e.source === item.name);
+      if (!edgesFromThisCard.length || !item.links?.length) return item;
+
+      // Remove the matching links
+      const newLinks = item.links.filter((link: any) => {
+        const shouldRemove = edgesFromThisCard.some(
+          edge => edge.target === link.name && edge.linkType === link.type
+        );
+        if (shouldRemove) changed = true;
+        return !shouldRemove;
+      });
+
+      if (newLinks.length === item.links.length) return item;
+      return { ...item, links: newLinks };
+    });
+
+    if (!changed) return;
+
+    setItems(newItems);
+    boardRef.current.cards = newItems;
+    await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+  }, [items, board.name, setBoardVersion, refresh, canWrite]);
+
+  // Create edge (link) between cards
+  const createEdge = useCallback(async (edge: EdgeCreateInfo) => {
+    if (!canWrite) return;
+    const { source, target, linkType } = edge;
+    
+    // Find the source card and add the link
+    const newItems = items.map(item => {
+      if (item.name !== source) return item;
+      
+      // Check if link already exists
+      const existingLinks = item.links || [];
+      const linkExists = existingLinks.some(
+        (link: any) => link.name === target && link.type === linkType
+      );
+      if (linkExists) return item;
+      
+      // Add the new link
+      return {
+        ...item,
+        links: [...existingLinks, { name: target, type: linkType }]
+      };
+    });
+
+    setItems(newItems);
+    boardRef.current.cards = newItems;
+    await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+  }, [items, board.name, setBoardVersion, refresh, canWrite]);
+
+  const duplicateCardsByName = useCallback(async (targets: string[]) => {
+    if (!canWrite) return;
+    if (!targets.length) return;
+
+    const existing = new Map((boardRef.current?.cards || []).map((c) => [c.name, c]));
+    const usedNames = new Set((boardRef.current?.cards || []).map((c) => c.name));
+    const nextItems = [...boardRef.current.cards];
+    const nextGraphLayout = { ...(graphLayoutRef.current || {}) };
+    let layoutChanged = false;
+    const newNames: string[] = [];
+
+    targets.forEach((name) => {
+      const source = existing.get(name);
+      if (!source) return;
+
+      const newName = nextDuplicatedName(Array.from(usedNames), source.name);
+      usedNames.add(newName);
+      const newKeyBase = (source.key || source.name || 'card').replace(/_vento_copy_.+$/, '');
+      const newCard = { ...source, name: newName, key: `${newKeyBase}_vento_copy_${generate_random_id()}` };
+      nextItems.push(newCard);
+      newNames.push(newName);
+
+      Object.keys(boardRef.current.layouts || {}).forEach(bp => {
+        const layoutEntry = boardRef.current.layouts[bp]?.find((l) => l.i === source.key);
+        if (layoutEntry) {
+          boardRef.current.layouts[bp].push({ ...layoutEntry, i: newCard.key });
+        }
+      });
+
+      const layoutEntry = graphLayoutRef.current?.[name];
+      if (layoutEntry) {
+        nextGraphLayout[newName] = {
+          ...layoutEntry,
+          x: (layoutEntry.x ?? 0) + 60,
+          y: (layoutEntry.y ?? 0) + 40,
+          layer: newCard.layer ?? layoutEntry.layer,
+          parent: layoutEntry.parent,
+          type: layoutEntry.type,
+        };
+        layoutChanged = true;
+      }
+    });
+
+    boardRef.current.cards = nextItems;
+    setItems(nextItems);
+    if (newNames.length) {
+      setSelectedNames(newNames);
+      selectedNamesRef.current = newNames;
+    }
+
+    if (layoutChanged) {
+      persistGraphLayout(nextGraphLayout);
+    }
+
+    await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+  }, [persistGraphLayout, board.name, setBoardVersion, refresh, canWrite]);
+
+  const layouts = useMemo(() => {
+    // return {
+    //   lg: computeLayout(items, { totalCols: 24, normalW: 8, normalH: 6, doubleW: 8, doubleH: 6 }, { layout: board?.layouts?.lg }),
+    //   md: computeLayout(items, { totalCols: 24, normalW: 10, normalH: 6, doubleW: 10, doubleH: 6 }, { layout: board?.layouts?.md }),
+    //   sm: computeLayout(items, { totalCols: 2, normalW: 2, normalH: 6, doubleW: 2, doubleH: 6 }, { layout: board?.layouts?.sm }),
+    //   xs: computeLayout(items, { totalCols: 1, normalW: 1, normalH: 6, doubleW: 1, doubleH: 6 }, { layout: board?.layouts?.sm }),
+    // }
+    const lyt = {}
+    Object.keys(gridSizes).forEach(key => {
+      lyt[key] = computeLayout(items || [], gridSizes[key], { layout: boardRef.current?.layouts[key] ?? board?.layouts[key] });
+    });
+    return lyt
+  }, [items, board?.layouts])
+
+  boardRef.current.layouts = layouts
+
+  const addWidget = async (cardOrCards) => {
+    if (!canWrite) return;
+    // Support both single card and array of cards
+    const cardsToAdd = Array.isArray(cardOrCards) ? cardOrCards : [cardOrCards];
+    const newCards = [];
+    const validationErrors = [];
+
+    // Validate all cards first
+    let currentCards = [...(boardRef.current?.cards ?? [])];
+    for (let i = 0; i < cardsToAdd.length; i++) {
+      const card = cardsToAdd[i];
+      try {
+        await checkCard(currentCards, card);
+        const uniqueKey = `${card.type}_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`;
+        const newCard = { ...card, key: uniqueKey, layer: card.layer ?? activeLayer ?? 'base' };
+        newCards.push(newCard);
+        // Add to current cards for subsequent validations
+        currentCards = [...currentCards, newCard];
+      } catch (e) {
+        if (e instanceof ValidationError) {
+          validationErrors.push(...e.errors);
+        } else {
+          console.error('Error checking card:', e);
+          validationErrors.push(`Error adding card "${card.name}": ${e.message || 'Unknown error'}`);
+        }
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors);
+    } else {
+      setErrors([]);
+    }
+
+    // If no cards were valid, throw error
+    if (newCards.length === 0 && validationErrors.length > 0) {
+      throw new Error(validationErrors.join(', '));
+    }
+
+    // Add all valid cards at once
+    if (newCards.length > 0) {
+      const newItems = [...boardRef.current?.cards, ...newCards].filter(item => item.key !== 'addwidget');
+      setItems(newItems);
+      boardRef.current.cards = newItems;
+      await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+
+      // Animate to the last added card
+      const lastCard = newCards[newCards.length - 1];
+      setTimeout(() => {
+        scrollToAndHighlight(document.getElementById(lastCard.key), {
+          duration: 1300,
+          color: 'var(--color6)',
+          ring: 2,
+        });
+      }, 500);
+    }
+  };
+
+  const setCardContent = (key, content) => {
+    if (!canWrite) return;
+    setItems(prevItems => {
+      try {
+        const newItems = prevItems.map(item => {
+          if (item.key === key || item.name === key) {
+            return { ...item, ...content };
+          }
+          return item;
+        });
+        boardRef.current.cards = newItems
+        return newItems
+      } catch (err) {
+        return prevItems
+      }
+    })
+
+    saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+  }
+
+  const onEditBoard = async () => {
+    try {
+      await saveBoard(board.name, boardRef.current, setBoardVersion, refresh)
+    } catch (err) {
+      alert('Error editing board')
+    }
+  }
+
+  // const getSelectionTargets = useCallback((name: string) => {
+  //   return selectedNames.includes(name) && selectedNames.length > 1 ? [...selectedNames] : [name];
+  // }, [selectedNames]);
+
+  //fill items with react content, addWidget should be the last item
+  const cards = (items || []).filter((item) => canWrite || item.type !== 'addWidget').map((item) => {
+    if (item.type == 'addWidget') {
+      return {
+        ...item,
+        content: <CenterCard title={"Add new card"} id={item.key}>
+          <YStack alignItems="center" justifyContent="center" f={1} width="100%" opacity={1}>
+            <YStack
+              bc={"$gray7"}
+              f={1}
+              w={"100%"}
+              p="$2"
+              pressStyle={{ bg: '$gray8' }}
+              borderRadius="$5"
+              hoverStyle={{ opacity: 0.75 }}
+              alignItems='center'
+              justifyContent='center'
+              className="no-drag"
+              cursor="pointer"
+              bw={1}
+              onPress={() => {
+                if (canWrite) setAddOpened(true);
+              }}
+            >
+              <Plus col={"$gray10"} size={60} />
+            </YStack>
+          </YStack>
+        </CenterCard>
+      }
+    } else {
+      return {
+        ...item,
+        content: <GraphActionCard
+          board={board}
+          readOnly={!canWrite}
+          data={item}
+          states={states?.boards?.[board.name]?.[item.name]}
+          html={item.html}
+          displayResponse={item.displayResponse}
+          name={item.name}
+          color={item.color}
+          icon={item.icon ? (item.html ? item.icon : '/public/icons/' + item.icon + '.svg') : undefined}
+          id={item.key}
+          title={item.name}
+          params={item.params}
+          containerProps={item.containerProps}
+          onCopy={async () => {
+            if (!canWrite) return;
+            const isSelected = selectedNamesRef.current.includes(item.name);
+            const targets = isSelected ? selectedNamesRef.current : [item.name];
+            await duplicateCardsByName(targets);
+          }}
+          onDelete={() => {
+            if (!canWrite) return;
+            const isSelected = selectedNamesRef.current.includes(item.name);
+            const targets = isSelected ? selectedNamesRef.current : [item.name];
+            setPendingDeleteNames(targets);
+            setIsDeleting(true);
+            setCurrentCard(item);
+          }}
+          onEdit={(tab) => {
+            setTab(tab)
+            setIsEditing(true);
+            setCurrentCard(item);
+            setEditedCard(item);
+            setOriginalCardJson(JSON.stringify(item));
+          }}
+          onDetails={() => {
+            setCurrentCard(item);
+            setIsApiDetails(true);
+            const url = `/api/core/v1/boards/${board.name}/actions/${item.name}`;
+          }}
+          onEditCode={() => {
+            setEditCode(item.sourceFile)
+          }}
+
+          setData={(data, id) => {
+            setCardContent(id, data)
+            console.log('setData called with:', data, id);
+          }}
+
+          value={states?.boards?.[board.name]?.[item.name] ?? undefined}
+          onRun={async (name, params) => {
+            if (defaultCardMethod === 'post') {
+              return (await API.post(`/api/core/v1/boards/${board.name}/actions/${name}`, params)).data;
+            } else {
+              const paramsStr = Object.keys(params ?? {}).map(key => key + '=' + encodeURIComponent(params[key])).join('&');
+              return (await API.get(`/api/core/v1/boards/${board.name}/actions/${name}?${paramsStr}`)).data;
+            }
+          }}
+        />
+      };
+    }
+  })
+
+  const params = currentCard?.params || {};
+  const configParams = currentCard?.configParams || {};
+  const executeActionURL = document?.location?.origin + `/api/core/v1/boards/${board.name}/cards/${currentCard?.name}/run?${Object.keys(params ?? {}).map(key => key + '=' + encodeURIComponent(configParams[key]?.defaultValue || params[key])).join('&')}&token=${currentCard?.tokens?.run || ''}`
+  const getValueURL = document?.location?.origin + `/api/core/v1/boards/${board.name}/cards/${currentCard?.name}?token=${currentCard?.tokens?.read || ''}`;
+  const hasTokens = currentCard?.tokens && Object.keys(currentCard.tokens).length > 0;
+  const apiInfo = (
+    <Stack>
+
+      {hasTokens ? (
+        <YStack space="$4">
+          <Paragraph fontSize="$4" mb="$2">
+            To read card content, use the following API endpoint:
+          </Paragraph>
+          <XStack
+            ai="center"
+            jc="space-between"
+            p="$3"
+            br="$4"
+            backgroundColor="$backgroundStrong"
+            gap="$3"
+          >
+            <Paragraph fontFamily="monospace" fontSize="$2" selectable>
+              {getValueURL}
+            </Paragraph>
+            <TamaButton
+              size="$2"
+              chromeless
+              icon={Copy}
+              onPress={() => navigator.clipboard.writeText(getValueURL)}
+            />
+          </XStack>
+
+          <Paragraph fontSize="$4" mt="$4" mb="$2">
+            To execute the card, use:
+          </Paragraph>
+          <XStack
+            ai="center"
+            jc="space-between"
+            p="$3"
+            br="$4"
+            backgroundColor="$backgroundStrong"
+            gap="$3"
+          >
+            <Paragraph
+              fontFamily="monospace"
+              fontSize="$2"
+              selectable
+              style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+            >
+              {executeActionURL}
+            </Paragraph>
+            <TamaButton
+              size="$2"
+              chromeless
+              icon={Copy}
+              onPress={() =>
+                navigator.clipboard.writeText(executeActionURL)
+              }
+            />
+          </XStack>
+
+        </YStack>
+      ) : (
+        <Paragraph fontSize="$4" mb="$2">
+          This card does not have API access enabled.
+        </Paragraph>
+      )}
+    </Stack>
+  );
+
+  const saveCard = async () => {
+    if (!canWrite) return;
+    const newItems = items.map(item =>
+      item.key === currentCard.key ? editedCard : item
+    );
+    const nameChanged = currentCard?.name && editedCard?.name && currentCard.name !== editedCard.name;
+
+    try {
+      await checkCard(newItems, editedCard);
+      setErrors([]);
+
+      if (nameChanged && graphLayoutRef.current?.[currentCard.name]) {
+        const preservedLayout = graphLayoutRef.current[currentCard.name];
+        const nextLayout = { ...graphLayoutRef.current };
+        delete nextLayout[currentCard.name];
+        nextLayout[editedCard.name] = { ...preservedLayout, layer: editedCard.layer ?? preservedLayout.layer };
+        persistGraphLayout(nextLayout);
+      }
+
+      setItems(newItems);
+      boardRef.current.cards = newItems;
+      await saveBoard(board.name, boardRef.current, setBoardVersion, refresh);
+      setCurrentCard(editedCard);
+      setEditedCard(editedCard);
+      setOriginalCardJson(JSON.stringify(editedCard));
+      setHasChanges(false);
+    } catch (e) {
+      if (e instanceof ValidationError) {
+        setErrors(e.errors);
+      } else {
+        console.error('Error checking card:', e);
+        setErrors(['An unexpected error occurred while checking the card.']);
+      }
+    }
+  };
+
+
+  const closeEdition = () => {
+    setIsEditing(false);
+    setCurrentCard(null);
+    setEditedCard(null);
+    setOriginalCardJson(null);
+    setErrors([]);
+    setHasChanges(false);
+  }
+
+  const closeDialog = (
+    <AlertDialog
+      open={showUnsavedDialog}
+      setOpen={setShowUnsavedDialog}
+      title="Unsaved changes"
+      description="You have unsaved changes. Do you want to save them before closing?"
+      hideAccept
+    >
+      <YStack width="100%" ai="center" gap="$4" mt="$3">
+        <XStack gap="$3" jc="center" width="100%">
+          <Button flex={1} onPress={() => setShowUnsavedDialog(false)}>
+            Cancel
+          </Button>
+
+          <Button flex={1} onPress={() => { setShowUnsavedDialog(false); closeEdition(); }} borderRadius="$4" >
+            Don't Save
+          </Button>
+
+          <Tinted>
+            <Button flex={1} color="white" backgroundColor="$color6" borderRadius="$4" onPress={async () => { await saveCard(); setShowUnsavedDialog(false); closeEdition(); }}  >
+              Save
+            </Button>
+          </Tinted>
+
+        </XStack>
+      </YStack>
+    </AlertDialog>)
+
+  const deleteTargets = pendingDeleteNames.length ? pendingDeleteNames : (currentCard?.name ? [currentCard.name] : []);
+  const deleteTitle = deleteTargets.length > 1 ? `Delete ${deleteTargets.length} cards` : `Delete "${deleteTargets[0] ?? ''}"`;
+  const deleteDescription = deleteTargets.length > 1
+    ? "Are you sure you want to delete the selected cards?"
+    : "Are you sure you want to delete this card?";
+
+  const isGraphView = effectiveView === 'graph'
+
+  return (
+    <YStack flex={1} position="relative" backgroundImage={board?.settings?.backgroundImage ? `url(${board.settings.backgroundImage})` : undefined} backgroundSize='cover' backgroundPosition='center'>
+      {showReadOnlyBadge && (
+        <XStack
+          position="absolute"
+          top="$3"
+          left="$3"
+          zIndex={20}
+          px="$3"
+          py="$2"
+          br="$6"
+          backgroundColor="$gray2"
+          borderColor="$gray6"
+          borderWidth={1}
+        >
+          <Text color="$gray11" fontSize="$3" fontWeight="600">Read-only</Text>
+        </XStack>
+      )}
+
+        <CardSelector key={addKey} board={board} addOpened={canWrite ? addOpened : false} setAddOpened={setAddOpened} onFinish={addWidget} states={states} icons={icons} actions={actions} errors={errors} />
+      {closeDialog}
+      <AlertDialog
+        acceptButtonProps={{ color: "white", backgroundColor: "$red9" }}
+        p="$5"
+        acceptCaption="Delete"
+        setOpen={setIsDeleting}
+        open={isDeleting}
+        onAccept={async () => {
+          if (deleteTargets.length) {
+            await deleteCardsByName(deleteTargets);
+          }
+          setPendingDeleteNames([]);
+          setIsDeleting(false);
+          setCurrentCard(null);
+        }}
+        acceptTint="red"
+        title={deleteTitle}
+        description={deleteDescription}
+      >
+      </AlertDialog>
+
+      <AlertDialog
+        acceptButtonProps={{ color: "white", backgroundColor: "$color6" }}
+        p="$5"
+        acceptCaption="Close"
+        setOpen={setIsApiDetails}
+        open={isApiDetails}
+        onAccept={() => setIsApiDetails(false)}
+        title={`Api Details for "${currentCard?.name}"`}
+        description={apiInfo}
+      />
+
+      <AlertDialog
+        open={showRelayoutConfirm}
+        setOpen={setShowRelayoutConfirm}
+        showCancel
+        acceptCaption="Relayout"
+        cancelCaption="Cancel"
+        title="Relayout Graph"
+        description="Are you sure you want to relayout? All graph positions will be reset and recalculated automatically."
+        onAccept={() => {
+          executeRelayout();
+        }}
+      />
+      <Theme reset>
+        <Dialog
+          modal
+          open={isEditing}
+          onOpenChange={(open) => {
+            if (!open) {
+              const hasRealChanges =
+                editedCard && originalCardJson &&
+                JSON.stringify(editedCard) !== originalCardJson;
+              if (hasRealChanges && canWrite) {
+                setShowUnsavedDialog(true);
+              } else {
+                closeEdition();
+              }
+            } else {
+              setIsEditing(true);
+            }
+          }}
+        >
+          <Dialog.Portal zIndex={100000} overflow='hidden'>
+            <Dialog.Overlay />
+            <Dialog.Content
+              bordered
+              elevate
+              animateOnly={['transform', 'opacity']}
+              enterStyle={{ x: 0, y: -20, opacity: 0, scale: 0.9 }}
+              exitStyle={{ x: 0, y: 10, opacity: 0, scale: 0.95 }}
+              gap="$4"
+              p="$0"
+              w={"90vw"}
+              bc="$bgContent"
+              h={"95vh"}
+              maw={1600}
+            >
+              <ActionCardSettings
+                board={board}
+                actions={actions}
+                states={states}
+                icons={icons}
+                card={currentCard}
+                tab={tab}
+                onSave={saveCard}
+                onEdit={(data) => {
+                  if (!canWrite) return;
+                  setEditedCard(data);
+                  setHasChanges(true);
+                }}
+                onClose={() => {
+                  if (canWrite) saveCard()
+                  closeEdition();
+                }}
+                errors={errors}
+                readOnly={!canWrite}
+              />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog>
+      </Theme>
+
+      <Theme reset>
+        <Dialog modal open={editCode} onOpenChange={setEditCode}>
+          <Dialog.Portal zIndex={100000} overflow='hidden'>
+            <Dialog.Overlay />
+            <Dialog.Content
+              bordered
+              elevate
+              animateOnly={['transform', 'opacity']}
+              enterStyle={{ x: 0, y: -20, opacity: 0, scale: 0.9 }}
+              exitStyle={{ x: 0, y: 10, opacity: 0, scale: 0.95 }}
+              gap="$4"
+              w={"90vw"}
+              h={"95vh"}
+              maw={1600}
+            >
+              <FileWidget
+                masksPath={'/workspace/actions'}
+                id={"file-widget-" + editCode}
+                hideCloseIcon={false}
+                isModified={true}
+                setIsModified={() => { }}
+                icons={[
+                  <IconContainer onPress={() => {
+                    setEditCode('')
+                  }}>
+                    <X color="var(--color)" size={"$1"} />
+                  </IconContainer>
+                ]}
+                currentFileName={editCode.split && editCode.split('/').pop()}
+                currentFile={editCode}
+              />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog>
+      </Theme>
+
+      <XStack f={1}>
+        <YStack f={1}>
+          {
+            isJSONView
+              ? <Monaco
+                language='json'
+                darkMode={resolvedTheme === 'dark'}
+                sourceCode={getParsedJSON(boardCode)}
+                onChange={setBoardCode}
+                options={{
+                  formatOnPaste: true,
+                  formatOnType: true
+                }}
+              />
+              : isGraphView
+                ? <GraphView
+                  cards={cards}
+                  layout={graphLayout}
+                  onLayoutChange={canWrite ? persistGraphLayout : undefined}
+                  activeLayer={activeLayer}
+                  onSelectLayer={(layer) => setActiveLayer(layer)}
+                  onDeleteNodes={canWrite ? (names) => {
+                    // Show confirmation dialog instead of deleting directly
+                    setPendingDeleteNames(names);
+                    setIsDeleting(true);
+                  } : undefined}
+                  onDeleteEdges={canWrite ? deleteEdges : undefined}
+                  onCreateEdge={canWrite ? createEdge : undefined}
+                  onSelectionChange={setSelectedNames}
+                  selectedIds={selectedNames}
+                  readOnly={!canWrite}
+                />
+                : <YStack f={1} p={"$6"}>{
+                  cards.length > 0 && items !== null
+                    ? <DashboardGrid
+                      extraScrollSpace={50}
+                      items={cards}
+                      settings={board.settings}
+                      layouts={boardRef.current.layouts}
+                      isDraggable={canWrite}
+                      isResizable={canWrite}
+                      onWidthChange={(newLayoutWidth) => {
+                        breakpointRef.current = getCurrentBreakPoint(newLayoutWidth)
+                      }}
+                      onLayoutChange={(layout, layouts) => {
+                        if (!canWrite) return;
+                        if (breakpointCancelRef.current == breakpointRef.current) {
+                          breakpointCancelRef.current = null
+                          return
+                        }
+
+                        //small dedup to avoid multiple saves in a short time
+                        if (JSON.stringify(boardRef.current.layouts[breakpointRef.current]) == JSON.stringify(layout)) {
+                          return
+                        }
+
+                        clearTimeout(dedupRef.current)
+                        dedupRef.current = setTimeout(() => {
+                          const bp = breakpointRef.current;
+                          const prev = boardRef.current.layouts[bp] || [];
+                          const next = layout;
+                          const merged = [
+                            ...prev.filter((oldItem) => !next.find((newItem) => newItem.i === oldItem.i)),
+                            ...next,
+                          ];
+                          boardRef.current.layouts[bp] = merged;
+
+
+                          saveBoard(board.name, boardRef.current, setBoardVersion, refresh, { bumpVersion: false })
+                        }, 100)
+                      }}
+                      onBreakpointChange={(bp) => {
+                        clearInterval(dedupRef.current)
+                        console.log('Breakpoint changed to: ', bp)
+                        breakpointRef.current = bp
+                        //after changing breakpoint a onLaoutChange is triggered but its not necessary to save the layout
+                        breakpointCancelRef.current = bp
+                        setTimeout(() => {
+                          breakpointCancelRef.current = null //reset the cancel flag after 1 second
+                        }, 1000)
+                      }}
+                    /> : (items !== null ? <YStack f={1} top={-100} ai="center" jc="center" gap="$5" o={0.1} className="no-drag">
+                      {/* <Scan size="$15" /> */}
+                      <H1>{board.name} is empty</H1>
+                      <H3>Click on the + button to add a new card</H3>
+                    </YStack> : null)}</YStack>
+          }
+        </YStack>
+        <HTMLView
+          style={{
+            display: effectiveView === 'ui' ? 'block' : 'none',
+            position: 'absolute',
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'var(--bgContent)',
+          }}
+          html={uicodeInfo?.code ?? ''}
+          data={{ board, state: states?.boards?.[board.name] }}
+          setData={(data) => console.log('set data from board', data)}
+        />
+        <FloatingArea tabVisible={tabVisible} setTabVisible={setTabVisible} board={board} automationInfo={automationInfo} boardRef={boardRef} actions={actions} states={states} uicodeInfo={uicodeInfo} setUICodeInfo={setUICodeInfo} onEditBoard={onEditBoard} deviceActions={deviceActions} readOnly={!canWrite} />
+    <YStack
+      position={"fixed" as any}
+      left={0}
+      height="100vh"
+      width="100vw"
+      display={tabVisible === 'visualui' ? 'flex' : 'none'}
+    >
+      {visualui}
+    </YStack>
+    {deviceActionsUi}
+  </XStack>
+</YStack>
+  )
+}
+
+const BoardViewLoader = ({ workspace, boardData, iconsData, params, pageSession }) => {
+  //console.log('BoardViewLoader', boardData, iconsData, params)
+  return <AsyncView ready={boardData.status != 'loading' && iconsData.status != 'loading'}>
+    <BoardControlsProvider board={boardData?.data} autopilotRunning={boardData?.data?.autopilot} boardName={params.board} >
+      <BoardViewAdmin
+        params={params}
+        pageSession={pageSession}
+        workspace={workspace}
+        boardData={boardData}
+        iconsData={iconsData}
+      />
+    </BoardControlsProvider>
+  </AsyncView>
+}
+
+let __currentBoardVersion = null //hack to prevent setTImeouts in the board to affect past loaded boards when switching between versions
+
+export const BoardViewAdmin = ({ params, pageSession, workspace, boardData, iconsData }) => {
+  const {
+    toggleJson,
+    saveJson,
+    toggleAutopilot,
+    openAdd,
+    setTabVisible,
+    tabVisible,
+    viewMode,
+    setViewMode,
+    canWrite
+  } = useBoardControls();
+
+  const setModeAndHash = (mode: 'ui' | 'board' | 'graph') => {
+    setViewMode(mode); // el efecto de arriba sincroniza el hash
+  };
+
+  const [boardVersionId] = useBoardVersionId();
+
+  const onFloatingBarEvent = (event) => {
+    if (event.type === 'toggle-rules') {
+      setTabVisible(tabVisible === 'rules' ? "" : 'rules');
+    }
+    if (event.type === 'toggle-history') {
+      setTabVisible(tabVisible === 'history' ? "" : 'history');
+    }
+    if (event.type === 'toggle-logs') {
+      setTabVisible(tabVisible === 'logs' ? "" : 'logs');
+    }
+    if (event.type === 'toggle-states') {
+      setTabVisible(tabVisible === 'states' ? "" : 'states');
+    }
+    if (event.type === 'toggle-devices') {
+      setTabVisible(tabVisible === 'devices' ? "" : 'devices');
+    }
+    if (event.type === 'toggle-uicode') {
+      setTabVisible(tabVisible === 'uicode' ? "" : 'uicode');
+    }
+    if (event.type === 'toggle-visualui') {
+      setTabVisible(tabVisible === 'visualui' ? "" : 'visualui');
+    }
+    if (event.type === 'toggle-json') {
+      toggleJson();
+    }
+    if (event.type === 'save-json') {
+      saveJson();
+    }
+    if (event.type === 'toggle-autopilot') {
+      toggleAutopilot();
+    }
+    if (event.type === 'open-add') {
+      if (canWrite) {
+        openAdd();
+      }
+    }
+    if (event.type === 'board-settings') {
+      setTabVisible(tabVisible === 'board-settings' ? "" : 'board-settings');
+    }
+    if (event.type === 'relayout') {
+      if (canWrite) {
+        window.dispatchEvent(new CustomEvent('board:relayout'));
+      }
+    }
+    if (event.type === 'mode-ui') setModeAndHash('ui');
+    if (event.type === 'mode-board') setModeAndHash('board');
+    if (event.type === 'mode-graph') setModeAndHash('graph');
+  }
+
+  __currentBoardVersion = boardData?.data?.version
+
+  if (params?.mode === 'ui') {
+    if (boardData.status == 'error') {
+      return <ErrorMessage
+        msg="Error loading board"
+        details={boardData.error.error}
+      />
+    }
+    if (boardData.status == 'loaded') {
+      return <Board forceViewMode={'ui'} key={boardData?.data?.name + '_' + boardVersionId} board={boardData.data} icons={iconsData.data?.icons} />;
+    }
+    return null;
+  }
+
+  return <AdminPage
+    title={params.board + " board"}
+    workspace={workspace}
+    pageSession={pageSession}
+    onActionBarEvent={onFloatingBarEvent}
+    actionBar={{ visible: tabVisible != 'visualui' && params?.mode !== 'ui' }}
+  >
+    {boardData.status == 'error' && <ErrorMessage
+      msg="Error loading board"
+      details={boardData.error.error}
+    />}
+    {boardData.status == 'loaded' && <Board forceViewMode={params.view} key={boardData?.data?.name + '_' + boardVersionId} board={boardData.data} icons={iconsData.data?.icons} />}
+  </AdminPage>
+}
+
+export const BoardView = ({ workspace, pageState, initialItems, itemData, pageSession, extraData, board, icons }: any) => {
+  const { params } = useParams()
+  const [boardData, setBoardData] = useState(board ?? getPendingResult('pending'))
+  const { refresh } = useBoardVersions(params.board)
+  const [boardVersionId] = useBoardVersionId();
+
+  const versionChanged = async () => {
+    __currentBoardVersion = null
+    if (boardVersionId) {
+      const result = await API.get({ url: `/api/core/v1/boards/${params.board}/` })
+      if (!result.isError) {
+        setBoardData(result)
+      }
+    }
+  }
+
+  useUpdateEffect(() => {
+    versionChanged()
+  }, [boardVersionId])
+
+  usePendingEffect((s) => { API.get({ url: `/api/core/v1/boards/${params.board}/` }, s) }, setBoardData, board)
+  useEffect(() => {
+    refresh(true)
+  }, [params.board])
+
+  const [iconsData, setIconsData] = useState(icons ?? getPendingResult('pending'))
+  usePendingEffect((s) => { API.get({ url: `/api/core/v1/icons` }, s) }, setIconsData, icons)
+  useIsAdmin(() => '/workspace/auth/login?return=' + document?.location?.pathname + (document?.location?.search ?? ''))
+
+  useEventEffect((payload, msg) => {
+    const boardInfo = msg?.parsed?.payload?.data
+    console.log('Received board update event for board: ', boardInfo.name)
+    setBoardData({
+      status: 'loaded',
+      data: boardInfo
+    })
+  }, { path: 'boards/update/' + params.board })
+
+  return (
+    <BoardViewLoader
+      workspace={workspace}
+      boardData={boardData}
+      iconsData={iconsData}
+      params={params}
+      pageSession={pageSession}
+    />
+  )
+}

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.0",
+  "name": "app",
+  "main": "index.ts",
+  "private": true,
+  "sideEffects": [
+    "*.css"
+  ],
+  "devDependencies": {
+    "@types/react": "^18.0.27"
+  }
+}

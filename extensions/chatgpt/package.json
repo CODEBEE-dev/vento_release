@@ -1,0 +1,7 @@
+{
+  "name": "@extensions/chatgpt",
+  "version": "1.0.0",
+  "dependencies": {
+    "openai": "5.16.0"
+  }
+}

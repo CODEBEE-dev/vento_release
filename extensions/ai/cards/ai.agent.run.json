@@ -1,0 +1,45 @@
+{
+  "defaults": {
+    "width": 3,
+    "height": 18,
+    "name": "ai_agent",
+    "icon": "bot",
+    "color": "#8B5CF6",
+    "description": "Execute a task using AI with a system description and specific plan",
+    "displayResponse": true,
+    "displayButton": true,
+    "markdownDisplay": true,
+    "type": "action",
+    "params": {
+      "system": "System description (from data/systems/)",
+      "plan": "Task plan (from data/plans/)",
+      "prompt": "Task to execute"
+    },
+    "configParams": {
+      "system": {
+        "visible": true,
+        "defaultValue": "base",
+        "type": "string",
+        "selector": "systems"
+      },
+      "plan": {
+        "visible": true,
+        "defaultValue": "example",
+        "type": "string",
+        "selector": "plans"
+      },
+      "prompt": {
+        "visible": true,
+        "defaultValue": "what does this board do?",
+        "type": "text"
+      }
+    },
+    "rulesCode": "// Check if send_to_user action exists in this board\nconst hasSendToUser = boardActions.some(a => a.name === 'send_to_user');\n\n// Track last message to avoid duplicates\nlet lastProgressMessage = '';\n\n// Key for storing running processes\nconst processesKey = `ai_agent_processes:${boardName}`;\nconst cancelHandlerKey = `cancelHandler:${boardName}:${name}`;\n\n// Progress callback - sends intermediate messages to user via Matrix\nconst onProgress = hasSendToUser ? async (message) => {\n    // Skip empty or duplicate messages\n    if (!message || message === lastProgressMessage) return;\n\n    // Skip very short messages or debug noise\n    if (message.length < 10) return;\n\n    // Skip lines that look like JSON or code\n    if (message.startsWith('{') || message.startsWith('[') || message.startsWith('```')) return;\n\n    lastProgressMessage = message;\n\n    // Send to user via send_to_user action\n    try {\n        await executeAction({ name: 'send_to_user', params: { message } });\n    } catch (e) {\n        // Ignore errors - don't let progress updates break the main flow\n    }\n} : undefined;\n\n// Called when a new process spawns - add to tracking\nconst onSpawn = (child) => {\n    const processes = context.boards.getVar(processesKey) || [];\n    processes.push(child);\n    context.boards.setVar(processesKey, processes);\n};\n\n// Called when a process exits - remove from tracking\nconst onExit = (child) => {\n    const processes = context.boards.getVar(processesKey) || [];\n    const filtered = processes.filter(p => p !== child);\n    context.boards.setVar(processesKey, filtered);\n\n    // If no more processes, clear the cancel handler\n    if (filtered.length === 0) {\n        context.boards.clearVar(cancelHandlerKey);\n    }\n};\n\n// Register cancel handler - kills all running processes\ncontext.boards.setVar(cancelHandlerKey, () => {\n    const processes = context.boards.getVar(processesKey) || [];\n    processes.forEach(p => {\n        try {\n            p.kill('SIGTERM');\n        } catch (e) {\n            // Process may have already exited\n        }\n    });\n    context.boards.clearVar(processesKey);\n});\n\nreturn await context.ai.runAgent({\n    system: params.system,\n    plan: params.plan,\n    prompt: params.prompt,\n    boardName,\n    boardActions,\n    board,\n    onProgress,\n    onSpawn,\n    onExit\n});",
+    "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n  \n  const isHtmlContent = typeof value === 'string' && value.trim().startsWith('<');\n  const mode = card.markdownDisplay ? 'markdown' : (card.htmlDisplay || isHtmlContent) ? 'html' : 'normal';\n\n  const content = <YStack f={1} mt={\"20px\"} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={mode} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+  },
+  "name": "run",
+  "id": "ai.agent.run",
+  "group": "ai",
+  "tag": "agent",
+  "templateName": "AI Agent"
+}

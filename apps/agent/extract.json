@@ -1,0 +1,8 @@
+{
+    "files": [
+        "package.json",
+        "service.config.js",
+        "services.js",
+        "setup.js"
+    ]
+}

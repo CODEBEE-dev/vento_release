@@ -1,0 +1,13 @@
+{
+    "files": [
+        "package.json",
+        "index.js",
+        "addUser.js",
+        "RemoteTransport.js",
+        "prepare.js",
+        "service.config.js",
+        "services.js",
+        "tsconfig.json"
+    ],
+    "cleanPackageJson": true
+}

@@ -1,0 +1,72 @@
+# electron-builder.standalone.yml
+# Configuracion para Electron standalone (vento embebido)
+# Uso: electron-builder -c electron-builder.standalone.yml --win
+
+appId: com.protofy.vento.standalone
+productName: VentoStandalone
+executableName: VentoStandalone
+
+directories:
+  output: ../dist-standalone
+
+# Cambiar el entry point a standalone-main.js
+extraMetadata:
+  main: electron/standalone-main.js
+
+# Incluir vento extraido como extraResources (carpeta real junto al .exe)
+# Esto es NECESARIO porque better-sqlite3 y otros modulos nativos
+# no funcionan desde dentro del asar
+# node_modules se incluye ya preparado (yarn prepare-dev ya ejecutado)
+extraResources:
+  - from: "vento-extracted"
+    to: "vento"
+    filter:
+      - "**/*"
+      - "!.env"
+      - "!data/dendrite/matrix_key.pem"
+      - "!logs/raw/*"
+
+mac:
+  target:
+    - dmg
+  icon: apps/adminpanel/public/icon.icns
+  hardenedRuntime: true
+  extendInfo:
+    NSCameraUsageDescription: "Esta aplicacion necesita acceso a la camara"
+    NSMicrophoneUsageDescription: "Esta aplicacion necesita acceso al microfono"
+  signIgnore:
+    - ".*\\.lproj/.*"
+    - ".*\\.pak"
+
+win:
+  target:
+    - dir
+  icon: apps/adminpanel/public/vento.ico
+  signingHashAlgorithms: []
+  sign: false
+
+linux:
+  target:
+    - AppImage
+    - tar.gz
+  icon: apps/adminpanel/public/logo-mac.png
+
+files:
+  - electron/**
+  - node_modules/adm-zip/**
+  - node_modules/tar/**
+  - node_modules/uuid/**
+  - node_modules/minimist/**
+  - node_modules/dotenv/**
+  - node_modules/tree-kill/**
+  - package.json
+  - "!**/*.log"
+  - "!.git"
+  - "!.gitignore"
+  - "!vento-extracted/**"
+
+buildDependenciesFromSource: false
+npmRebuild: false
+
+# El asar NO incluye extraResources, estan fuera
+asar: true

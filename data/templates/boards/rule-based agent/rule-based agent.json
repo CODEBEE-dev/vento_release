@@ -1,0 +1,339 @@
+{
+    "name": "{{{name}}}",
+    "cards": [
+        {
+            "key": "action_1762627183357",
+            "width": 3,
+            "height": 18,
+            "icon": "globe",
+            "name": "agent_input",
+            "graphOrder": 1000,
+            "description": "A job queue with a list of pending jobs and a current job",
+            "type": "action",
+            "editorOptions": {},
+            "displayResponse": true,
+            "params": {
+                "item": "",
+                "action": "action to perform in the queue: push, pop, clear",
+                "response": ""
+            },
+            "configParams": {
+                "item": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                },
+                "action": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                },
+                "response": {
+                    "visible": true,
+                    "defaultValue": "",
+                    "type": "string"
+                }
+            },
+            "presets": {
+                "reply": {
+                    "description": "Sends a reply to the current job and makes the next item (if any) the current job. The reply should be specified in the response param",
+                    "configParams": {
+                        "action": {
+                            "visible": false,
+                            "defaultValue": "reply"
+                        },
+                        "item": {
+                            "visible": false
+                        },
+                        "response": {
+                            "visible": true
+                        }
+                    }
+                },
+                "skip": {
+                    "description": "Skips the current job. Do not use unless you know what you are doing.",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "skip"
+                        }
+                    }
+                },
+                "reset": {
+                    "description": "resets the queue state to empty and skip curret job",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "clear"
+                        }
+                    }
+                },
+                "remove": {
+                    "description": "remove the element with the given index from the job queue",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "remove"
+                        },
+                        "item": {
+                            "visible": true,
+                            "defaultValue": 0,
+                            "type": "number"
+                        }
+                    }
+                },
+                "push": {
+                    "params": {
+                        "item": "item to push"
+                    },
+                    "description": "Adds a new job",
+                    "configParams": {
+                        "action": {
+                            "defaultValue": "push"
+                        },
+                        "item": {
+                            "visible": true,
+                            "defaultValue": "",
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "enableAgentInputMode": true,
+            "tokens": {},
+            "displayButton": false,
+            "manualAPIResponse": true,
+            "layer": "base",
+            "links": [],
+            "rulesCode": "const callCore = () => {\n  setTimeout(() => executeAction({name: \"current_request\", params: {}}), 1)\n}\n\nif (params.action == \"reset\") {\n  return { items: [], current: undefined };\n} else if (params.action == \"skip\") {\n  if(board[name]?.items?.length) {\n    callCore();\n  }\n  return {\n    items: (Array.isArray(board[name]?.items) ? board[name].items : []).slice(\n      1\n    ),\n    current: board[name].items[0],\n  };\n} else if (params.action == \"remove\") {\n  const queue = Array.isArray(board[name]?.items) ? board[name].items : [];\n  const index = parseInt(params.index, 10);\n  return {\n    items: queue.slice(0, index).concat(queue.slice(index + 1)),\n    current: board[name]?.current,\n  };\n} else if (params.action == \"clear\") {\n  return { items: [], current: board[name].current };\n} else if (params.action == \"reply\") {\n  //reply to current job\n  const job = board[name].current;\n  if (!job) {\n    throw \"Unable to send reply: There is not current job to reply to\";\n  }\n  const res = context.boards.getVar(\"job_\" + job.id, true);\n  if (!res) {\n    throw \"Unable to send reply: Empty res object in current job.\";\n  }\n  res.send(params.response);\n  if(board[name]?.items?.length) {\n    callCore();\n  }\n  return {\n    items: (Array.isArray(board[name]?.items) ? board[name].items : []).slice(\n      1\n    ),\n    current: board[name].items[0],\n  };\n} else {\n  const genUID = (l = 16) => {\n    const t = Date.now().toString(36);\n    const r =\n      Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);\n    let out = \"\";\n    for (let i = 0; i < l; i++)\n      out += (i % 2 ? t : r)[i % (i % 2 ? t.length : r.length)];\n    return out;\n  };\n  const uid = genUID(16);\n  context.boards.setVar(\"job_\" + uid, res);\n  const item = {\n    id: uid,\n    time: new Date().toISOString(),\n    ua: req.get(\"User-Agent\"),\n    params: req.query,\n    path: params.path,\n  };\n\n  if (board[name]?.current) {\n    return {\n      items: (Array.isArray(board[name]?.items)\n        ? board[name].items\n        : []\n      ).concat([item]),\n      current: board[name]?.current,\n    };\n  }\n  callCore();\n  return {\n    items: Array.isArray(board[name]?.items) ? board[name].items : [],\n    current: item,\n  };\n}\n",
+            "html": "//@card/react\nfunction Widget(props) {\n  return (\n    <ViewList\n      onReply={(item, response) => execute_action(props.name, {action: 'reply', response: response})}\n      enableReply={true}\n      enableManualPop={true}\n      current={props?.value?.current}\n      emptyMessageProps={{\n        fontSize: \"$6\",\n        fontWeight: \"600\"\n      }}\n      emptyDescription={<YStack>\n        <Paragraph color=\"$color10\" mt={\"$2\"} fontSize={\"$4\"}>\n          <a style={{}} target=\"_new\" href={'/api/agents/v1/'+window?.board?.name+'/'+props?.name}>{'Open agent link'}</a>\n        </Paragraph>\n      </YStack>  \n      }\n      // emptyMode=\"wait\"\n      emptyMessage=\"Empty agent job queue\"\n      disableManualPush={true}\n      items={props?.value?.items} \n      onPop={(items) => execute_action(props.name, {action: 'skip'})}\n      onClear={(items) => execute_action(props.name, {action: 'reset'})}\n      onPush={(item) => execute_action(props.name, {action: 'push', item})}\n      onDeleteItem={(item, index) => execute_action(props.name, {action: 'remove', index})} \n    />\n  );\n}\n"
+        },
+        {
+            "key": "action_1762627353207",
+            "width": 2,
+            "height": 7,
+            "icon": "rocket",
+            "type": "action",
+            "name": "action",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "input": "action input"
+            },
+            "configParams": {
+                "input": {
+                    "visible": true,
+                    "defaultValue": "board.current_request",
+                    "type": "any"
+                }
+            },
+            "description": "Default description, edit this description to improve usability of this action",
+            "layer": "base",
+            "links": [
+                {
+                    "name": "reply",
+                    "type": "post"
+                }
+            ],
+            "rulesCode": "return `Hello, got your request. \r\nI'm a simple automata based reflexive agent. \r\nIf you edit the card 'action' inside my agent board you can configure what I do with it.\r\n`",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        },
+        {
+            "key": "action_1762627462167",
+            "width": 2,
+            "height": 7,
+            "icon": "rocket",
+            "type": "action",
+            "name": "current_request",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "input": "action input"
+            },
+            "configParams": {
+                "input": {
+                    "visible": false,
+                    "defaultValue": "board.agent_input.current",
+                    "type": "any"
+                }
+            },
+            "description": "Default description, edit this description to improve usability of this action",
+            "customName": "current_request",
+            "layer": "base",
+            "links": [
+                {
+                    "name": "action",
+                    "type": "post"
+                }
+            ],
+            "rulesCode": "return params.input",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        },
+        {
+            "key": "action_1762627965286",
+            "width": 2,
+            "height": 7,
+            "icon": "rocket",
+            "type": "action",
+            "name": "reply",
+            "displayResponse": true,
+            "displayIcon": false,
+            "params": {
+                "response": "response to send"
+            },
+            "configParams": {
+                "response": {
+                    "visible": true,
+                    "defaultValue": "board.action",
+                    "type": "any"
+                }
+            },
+            "description": "Default description, edit this description to improve usability of this action",
+            "customName": "reply",
+            "layer": "base",
+            "links": [],
+            "rulesCode": "await executeAction({name: \"agent_input\", params: {action:'reply', response: params.response}})\r\nreturn params.response",
+            "html": "//@card/react\n\nfunction Widget(card) {\n  const value = card.value;\n\n  const content = <YStack f={1} ai=\"center\" jc=\"center\" width=\"100%\">\n      {card.icon && card.displayIcon !== false && (\n          <Icon name={card.icon} size={48} color={card.color}/>\n      )}\n      {card.displayResponse !== false && (\n          <CardValue mode={card.markdownDisplay ? 'markdown' : card.htmlDisplay ? 'html' : 'normal'} value={value ?? \"N/A\"} />\n      )}\n  </YStack>\n\n  return (\n      <Tinted>\n        <ProtoThemeProvider forcedTheme={window.TamaguiTheme}>\n          <ActionCard data={card}>\n            {card.displayButton !== false ? <ParamsForm data={card}>{content}</ParamsForm> : card.displayResponse !== false && content}\n          </ActionCard>\n        </ProtoThemeProvider>\n      </Tinted>\n  );\n}\n"
+        }
+    ],
+    "autopilot": false,
+    "layouts": {
+        "lg": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 23,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 23,
+                "y": 27,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 38,
+                "y": 34,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 53,
+                "y": 41,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            }
+        ],
+        "md": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 23,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 23,
+                "y": 27,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 38,
+                "y": 34,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 42,
+                "w": 15,
+                "h": 8,
+                "isResizable": true
+            }
+        ],
+        "sm": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 2,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 0,
+                "y": 28,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 1,
+                "y": 35,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 43,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            }
+        ],
+        "xs": [
+            {
+                "i": "action_1762627183357",
+                "x": 0,
+                "y": 0,
+                "w": 1,
+                "h": 28,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627353207",
+                "x": 0,
+                "y": 28,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627462167",
+                "x": 0,
+                "y": 36,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            },
+            {
+                "i": "action_1762627965286",
+                "x": 0,
+                "y": 44,
+                "w": 1,
+                "h": 8,
+                "isResizable": true
+            }
+        ]
+    },
+    "priority": 1,
+    "icon": "workflow",
+    "boardCode": "const { boardConnect } = require('protonode')\r\nconst { Protofy } = require('protobase')\r\n\r\nconst run = Protofy(\"code\", async ({ context, states, board }) => {\r\n\r\n})\r\n\r\nboardConnect(run)",
+    "boardUI": "//@card/react\r\n//board is the board object\r\n//state is the state of the board\r\n\r\nfunction Widget({board, state}) {\r\n    const cards = board.cards.reduce((total, card) => {\r\n        return {\r\n            ...total,\r\n            [card.name]: card\r\n        }\r\n    }, {})\r\n\r\n\r\n    return <XStack gap=\"$5\" width=\"100%\" f={1}>\r\n        <YStack>\r\n            {\r\n                Object.keys(cards).map(card => {\r\n                    return <YStack height=\"60px\" jc=\"center\" gap={\"$4\"}>\r\n                        <div>{card}</div>\r\n                    </YStack>\r\n                })\r\n            }\r\n        </YStack>\r\n        <YStack>\r\n            {\r\n                Object.keys(cards).map(card => {\r\n                    return <XStack ai=\"center\" height=\"60px\" gap={\"$4\"}>\r\n                        <div>{JSON.stringify(state?.[card])}</div>\r\n                    </XStack>\r\n                })\r\n            }\r\n        </YStack>\r\n        <YStack>\r\n            {\r\n                Object.keys(cards).map(card => {\r\n                    return <XStack ai=\"center\" height=\"60px\" gap={\"$4\"}>\r\n                        {cards[card] && cards[card].type == 'action' ? <Button onPress={() => {\r\n                            execute_action(card, {})\r\n                        }}>Run</Button> : ''}\r\n                    </XStack>\r\n                })\r\n            }\r\n        </YStack>\r\n    </XStack>\r\n}\r\n                "
+}

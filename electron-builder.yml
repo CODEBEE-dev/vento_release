@@ -1,0 +1,44 @@
+appId: com.protofy.vento
+productName: Vento
+executableName: Vento
+
+directories:
+  output: ../dist
+
+mac:
+  target:
+    - dmg
+  icon: apps/adminpanel/public/icon.icns
+  hardenedRuntime: true
+  extendInfo:
+    NSCameraUsageDescription: "Esta aplicación necesita acceso a la cámara"
+    NSMicrophoneUsageDescription: "Esta aplicación necesita acceso al micrófono"
+  signIgnore:
+    - ".*\\.lproj/.*"
+    - ".*\\.pak"
+win:
+  target:
+    - portable
+    - dir
+  icon: apps/adminpanel/public/vento.ico
+  signingHashAlgorithms: []
+  sign: false
+
+linux:
+  target:
+    - AppImage
+    - tar.gz
+  icon: apps/adminpanel/public/logo-mac.png
+
+files:
+  - electron/**
+  - node_modules/adm-zip/**
+  - node_modules/tar/**
+  - node_modules/uuid/**
+  - package.json
+  - "!**/*.log"
+  - "!.git"
+  - "!.gitignore"
+
+buildDependenciesFromSource: false
+npmRebuild: false

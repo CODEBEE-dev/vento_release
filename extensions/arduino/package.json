@@ -1,0 +1,7 @@
+{
+  "name": "@extensions/arduino",
+  "version": "1.0.0",
+  "dependencies": {
+    "serialport": "13.0.0"
+  }
+}

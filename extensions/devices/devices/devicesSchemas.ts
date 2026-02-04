@@ -1,0 +1,409 @@
+import { ProtoModel, SessionDataType, API, Schema, z } from 'protobase'
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
+import * as protodeviceFunctions from 'protodevice/src/device'
+
+/**
+ * Evaluates device component code with all protodevice functions in scope.
+ * Uses Function constructor to inject functions like device(), wifi(), mqtt(), etc.
+ */
+const evalDeviceCode = (code: string) => {
+  const fnNames = Object.keys(protodeviceFunctions)
+  const fnValues = Object.values(protodeviceFunctions)
+  const fn = new Function(...fnNames, `return ${code}`)
+  return fn(...fnValues)
+}
+
+const normalizeDefinitionSubsystems = (subsystems: any): any[] => {
+  if (Array.isArray(subsystems)) return subsystems
+  if (subsystems && typeof subsystems === 'object') return Object.values(subsystems)
+  return []
+}
+
+export const DevicesSchema = Schema.object({
+  name: z.string().hint("Device name").static().regex(/^[a-z0-9_]+$/, "Only lower case chars, numbers or _").id().search().label("Name"),
+  deviceDefinition: z.string().label("Template").optional(),
+  substitutions: z.record(z.string().optional(), z.any().optional()).optional().hidden(),
+  subsystem: z.array(z.any()).optional().hidden(),
+  data: z.record(z.string(), z.any()).optional().hidden(),
+  platform: z.string().search().label("Platform").generate("esphome"),
+  location: z.object({
+    lat: z.string(),
+    long: z.string()
+  }).optional().location("lat", "long").hidden().generate(()=>{return {lat: "41.3947846",long: "2.1939663"}},true), // PROTOFY HQ
+  credentials: z.record(z.record(z.string(), z.any())).optional().onCreate("generateDeviceCredentials").hidden()
+})
+export type DevicesType = z.infer<typeof DevicesSchema>;
+// export const DevicesModel = AutoModel.createDerived<DevicesType>("DevicesModel", DevicesSchema);
+
+export class DeviceSubsystemAction {
+  data: any
+  device: string
+  subsystem: string
+  constructor(device, subsystem, data) {
+    this.data = data
+    this.device = device
+    this.subsystem = subsystem
+  }
+
+  getEndpoint() {
+    return getPeripheralTopic(this.device, this.data.endpoint)
+  }
+
+  getValue() {
+    return this.data.payload.value
+  }
+
+  getMode() {
+    return this.data.mode
+  }
+
+  getReplyTimeoutMs() {
+    return this.data.replyTimeoutMs
+  }
+}
+
+export class DeviceSubsystemMonitor{
+  data: any
+  device: string
+  subsystem: string
+  constructor(device, subsystem, data) {
+    this.data = data
+    this.device = device
+    this.subsystem = subsystem
+  }
+
+  getEndpoint() {
+    return getPeripheralTopic(this.device, this.data.endpoint)
+  }
+
+  getEventPath() {
+    return this.getEndpoint().split('/').slice(2).join('/')
+  }
+
+  getLabel() {
+    return this.data.label ?? this.data.name
+  }
+  
+  getUnits() {
+    return this.data.units ? this.data.units : ''
+  }
+
+  getValueAPIURL() {
+    return "/api/core/v1/devices/"+this.device+"/subsystems/"+this.subsystem+"/monitors/"+this.data.name
+  }
+
+  getName() {
+    return this.data.name
+  }
+}
+
+export class DeviceSubsystem {
+  data: any
+  device: string
+  constructor(device, data) {
+    this.data = data
+    this.device = device
+  }
+
+  getAction(name: string) {
+    if(!this.data || !this.data.actions) {
+      return
+    }
+
+    const actionData = this.data.actions.find(a => a.name == name)
+    if(actionData) {
+      return new DeviceSubsystemAction(this.device, name, actionData)
+    }
+  }
+  getMonitor(name: string) {
+    if(!this.data || !this.data.monitors) {
+      return
+    }
+
+    const monitorData = this.data.monitors.find(a => a.name == name)
+    if(monitorData) {
+      return new DeviceSubsystemMonitor(this.device, name, monitorData)
+    }
+  }
+}
+export class DevicesModel extends ProtoModel<DevicesModel> {
+  constructor(data: DevicesType, session?: SessionDataType, ) {
+      super(data, DevicesSchema, session, "Test");
+  }
+
+  public static getApiOptions() {
+      return {
+          name: 'devices',
+          prefix: '/api/v1/'
+      }
+  }
+
+  isInitialized(){
+    return this.data?.subsystem? true: false
+  }
+
+  getConfigDir(){
+    return 'data/devices/'+this.data?.name;
+  }
+
+  getConfigFile(){
+    if(this.data?.platform == "esphome"){
+      return this.getConfigDir() + "/config.yaml"
+    }
+    return null
+  }
+  
+  getLogs(){
+    if(this.data?.platform == "esphome"){
+      return true
+    }
+    return false
+  }
+
+  async getManifestUrl(compileSessionId){
+    if(this.data.platform == "esphome") {
+      return "http://localhost:8000/api/v1/esphome/" + this.data.name + "/" + compileSessionId + "/manifest"
+    }else{
+      throw new Error("Unsupported SDK for manifest URL")
+    }
+  }
+
+  setMonitorEphemeral(subsystem: string, monitor: string, value: boolean): DevicesModel|undefined{
+    const subsystemCandidate = this.getSubsystem(subsystem)
+    if(subsystemCandidate){
+      const monitorCandidate = subsystemCandidate.getMonitor(monitor)
+      if(monitorCandidate){
+        this.data.subsystem.find(s => s.name == subsystem).monitors.find(m => m.name == monitor).ephemeral = value
+        return new DevicesModel(this.data)
+      }
+    }
+    return undefined
+  }
+
+  getMonitorByEndpoint(endpoint: string) {
+    if(!this.data || !this.data.subsystem) {
+      return null
+    }
+    let monitor = null
+    this.data.subsystem.forEach(subsystem => {
+      // console.log("Subsystems - getMonitorByEndpoint: ", subsystem)
+      if(subsystem.monitors) {
+        const monitorData = subsystem.monitors.find(m => m.endpoint == endpoint)
+        // console.log("MonitorData: ", monitorData)
+        if(monitorData) {
+          monitor =new DeviceSubsystemMonitor(this.data.name, subsystem.name, monitorData)
+          // console.log("Monitor: ", monitor)
+        }
+      }
+    })
+    return monitor
+  }
+
+  getStateNameByMonitor(monitor: DeviceSubsystemMonitor) {
+    return monitor.subsystem + "_" + monitor.data.name
+  }
+
+  getSubsystem(name: string) {
+    if(!this.data || !this.data.subsystem) {
+      return
+    }
+    const subsystemData = this.data.subsystem.find(s => s.name == name)
+    if(subsystemData) {
+      return new DeviceSubsystem(this.data.name, subsystemData)
+    }
+  }
+
+  async getYaml(serviceToken?: string){
+    let yaml = undefined
+    try {
+      const withToken = (url: string) => {
+        if (!serviceToken) return url
+        return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(serviceToken)
+      }
+
+      const response = await API.get(withToken('/api/core/v1/deviceDefinitions/' + encodeURIComponent(this.data.deviceDefinition)));
+      if (response.isError) {
+        console.log(response.error)
+        return;
+      }
+      const deviceDefinition = response.data
+      if (deviceDefinition?.sdk === 'esphome-yaml') {
+        const definitionName = deviceDefinition?.name ?? this.data.deviceDefinition
+        const configPath = `data/deviceDefinitions/${definitionName}/config.yaml`
+        const baseYamlResponse = await API.get(withToken('/api/core/v1/files/' + configPath))
+
+        if (baseYamlResponse?.isError) {
+          console.log(baseYamlResponse.error)
+          return
+        }
+
+        const baseYamlContent = baseYamlResponse?.data ?? ''
+        let yamlObject: any = {}
+
+        try {
+          const parsed = yamlParse(baseYamlContent || '')
+          yamlObject = parsed && typeof parsed === 'object' ? parsed : {}
+        } catch (err) {
+          console.error('Error parsing base YAML config: ', err)
+          yamlObject = {}
+        }
+        // Ensure the 'esphome' section exists and set the device name. In the future we could add mqtt broker, keys, etc in a per -device basis
+        yamlObject.esphome = { ...(yamlObject.esphome ?? {}), name: this.data.name }
+        // Set substitutions.device_name so YAML templates can use ${device_name}
+        if (yamlObject.substitutions?.device_name) {
+          yamlObject.substitutions.device_name = this.data.name
+        }
+        //if yamlObject has mqtt ensure mqtt.topic_prefix is set to devices/<device_name>
+        if (yamlObject.mqtt) {
+          yamlObject.mqtt.topic_prefix = getPeripheralTopic(this.data.name)
+          const mqttCreds = this.data?.credentials?.mqtt
+          if (mqttCreds) {
+            yamlObject.mqtt = {
+              ...yamlObject.mqtt,
+              broker: mqttCreds.host ?? yamlObject.mqtt.broker,
+              username: mqttCreds.username ?? yamlObject.mqtt.username,
+              password: mqttCreds.password ?? yamlObject.mqtt.password,
+              port: mqttCreds.port ?? yamlObject.mqtt.port
+            }
+          }
+        }
+        // inject Wi-Fi credentials when available
+        const wifiCreds = this.data?.credentials?.wifi
+        if (wifiCreds && (wifiCreds.ssid || wifiCreds.password)) {
+          yamlObject.wifi = {
+            ...(yamlObject.wifi ?? {}),
+            ssid: wifiCreds.ssid ?? yamlObject.wifi?.ssid,
+            password: wifiCreds.password ?? yamlObject.wifi?.password
+          }
+        }
+
+        // If the definition provides subsystems and the device has none, hydrate them here
+        const defSubsystems = normalizeDefinitionSubsystems(deviceDefinition?.subsystems)
+        if (!this.data.subsystem?.length && defSubsystems.length) {
+          this.data.subsystem = defSubsystems
+          try {
+            await API.post(withToken("/api/core/v1/devices/" + this.data.name), { ...this.data })
+          } catch (err) {
+            console.error('Error persisting subsystems from definition: ', err)
+          }
+        }
+
+        yaml = yamlStringify(yamlObject)
+        await API.post(withToken("/api/v1/esphome/" + this.data.name + "/yamls"), { yaml })
+        return yaml
+      }
+      const response1 = await API.get(withToken('/api/core/v1/deviceBoards/' + encodeURIComponent(deviceDefinition.board.name)));
+        if (response1.isError) {
+          console.log(response1.error)
+          return;
+        }
+      const deviceObject = await API.get(withToken("/api/core/v1/devices/" + encodeURIComponent(this.data.name)))
+
+      console.log("---------deviceDefinition----------", deviceDefinition)
+      deviceDefinition.board = response1.data
+      const jsCode = deviceDefinition.config.components;
+      console.log("-----------------deviceData-----------------", deviceObject.data)
+      const deviceCode = 'device(' + jsCode.replace(/;/g, "") + ')';
+      console.log("-------DEVICE CODE------------", deviceCode)
+      const deviceObj = evalDeviceCode(deviceCode)
+      if(deviceObject.data.credentials){
+        deviceObj.setCredentials(deviceObject.data.credentials)
+      }
+      const componentsTree = deviceObj.getComponentsTree(this.data.name, deviceDefinition)
+      yaml = deviceObj.dump("yaml")
+
+      const subsystems = deviceObj.getSubsystemsTree(this.data.name, deviceDefinition)
+
+      await API.post(withToken("/api/v1/esphome/" + this.data.name + "/yamls"), { yaml })
+      if (deviceObject.isError) {
+        console.error(deviceObject.error)
+        return;
+      }
+      // deviceObject.data.subsystem = subsystems
+      
+      API.post(withToken("/api/core/v1/devices/" + encodeURIComponent(this.data.name)), deviceObject.data)
+      console.log("ComponentsTree: ", componentsTree)
+      console.log("Subsystems: ", subsystems)
+    } catch (error) {
+      console.log("Cant get device, error: ", error)
+    }
+    return yaml
+  }
+  async setSubsystem(){
+    const response = await API.get('/api/core/v1/deviceDefinitions/' + this.data.deviceDefinition);
+    if (response.isError) {
+      console.log(response.error)
+      return;
+    }
+    const deviceDefinition = response.data
+    // For esphome-yaml definitions, prefer stored subsystems instead of rebuilding from components
+    let subsystems: any[] = []
+    if (deviceDefinition?.sdk === 'esphome-yaml') {
+      subsystems = normalizeDefinitionSubsystems(deviceDefinition?.subsystems)
+    } else {
+      const jsCode = deviceDefinition.config.components;
+      const deviceCode = 'device(' + jsCode.replace(/;/g, "") + ')';
+      const deviceObj = evalDeviceCode(deviceCode)
+      subsystems = deviceObj.getSubsystemsTree(this.data.name, deviceDefinition)
+    }
+
+    if (!subsystems.length) return
+
+    const deviceObject = await API.get("/api/core/v1/devices/" + this.data.name)
+    if (deviceObject.isError) {
+      console.error(deviceObject.error)
+      return;
+    }
+    deviceObject.data.subsystem = subsystems
+    API.post("/api/core/v1/devices/" + encodeURIComponent(this.data.name), deviceObject.data)
+    API.get('/api/core/v1/devices/registerActions');
+  }
+  
+
+  async getCore(){
+    const response = await API.get('/api/core/v1/deviceDefinitions/' + this.data.deviceDefinition);
+    if (response.isError) {
+      console.log(response.error)
+      return;
+    }
+    const deviceDefinition = response.data
+    const core = deviceDefinition.board.core
+    return core
+  }
+  async setUploaded(){
+    await this.setSubsystem()
+  }
+
+
+  create(data?):DevicesModel {
+      const result = super.create(data)
+      return result
+  }
+
+  read(extraData?): DevicesType {
+      const result = super.read(extraData)
+      return result
+  }
+
+  update(updatedModel: DevicesModel, data?: DevicesType): DevicesModel {
+      const result = super.update(updatedModel, data)
+      return result
+  }
+
+  delete(data?): DevicesModel {
+      const result = super.delete(data)
+      return result
+  }
+
+  protected static _newInstance(data: any, session?: SessionDataType): DevicesModel {
+      return new DevicesModel(data, session);
+  }
+
+  static load(data: any, session?: SessionDataType): DevicesModel {
+    return this._newInstance(data, session);
+  }
+}
+
+export const getPeripheralTopic = (deviceName: string, endpoint: string = '') => {
+  return "devices/" + deviceName + endpoint
+}

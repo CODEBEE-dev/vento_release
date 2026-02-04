@@ -1,0 +1,9 @@
+{
+    "files": [
+        "package.json",
+        "prepare.js",
+        "service.config.js",
+        "services.js",
+        "start.js"
+    ]
+}

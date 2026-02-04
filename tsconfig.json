@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "allowJs": true,
+    "esModuleInterop": true,
+    "jsx": "react-native",
+    "lib": ["DOM", "ESNext"],
+    "moduleResolution": "node",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "target": "ESNext",
+    "strictNullChecks": false,
+    "noUncheckedIndexedAccess": true
+  },
+  "typeRoots": [ // Specifies a list of directories for type definitions
+    "./node_modules/@types",
+    "./.types"
+  ],
+  "exclude": [
+    "node_modules",
+    "babel.config.js", 
+    "metro.config.js", 
+    ".yarn",
+    "dist",
+    "types",
+    ".next",
+    ".tamagui",
+    ".venv"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "protodevice",
+  "version": "0.0.1",
+  "sideEffects": false,
+  "source": "src/index.ts",
+  "main": "src/index.ts",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "pull": "git pull",
+    "start": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "json2yaml": "^1.1.0",
+    "ts-node": "10.9.1",
+    "tslib": "2.6.2",
+    "typescript": "5.8.2"
+  }
+}

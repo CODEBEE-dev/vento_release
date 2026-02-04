@@ -1,0 +1,393 @@
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content="Natural Language Autopilot system for smart and industrial devices"/><script>!function(){try {var d=document.documentElement.classList;d.remove('t_dark');d.remove('t_light');var e=localStorage.getItem('theme');if("system"===e||(!e&&true)){var t="(prefers-color-scheme: dark)",m=window.matchMedia(t);m.media!==t||m.matches?d.add('t_dark'):d.add('t_light')}else if(e) var x={"dark":"t_dark","light":"t_light"};d.add(x[e])}catch(e){}}()</script><title>undefined Board</title><meta name="next-head-count" content="5"/><script src="/api/core/v1/settings.js?1770121918393"></script><style>nextjs-portal { display: none !important; }</style><link rel="icon" href="/favicon.png"/><meta name="docsearch:language" content="en"/><meta name="docsearch:version" content="1.0.0,latest"/><script src="/public/externals/babel.min.js"></script><script>
+            
+              (function() {
+                if (typeof window !== 'undefined') {
+                  (function shimDrawImage() {
+                    const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+                    const drawQueues = new WeakMap(); // Mapea cada contexto a su cola de draws pendientes
+                    const drawInProgress = new WeakMap(); // Para evitar bucles infinitos al procesar la cola
+
+                    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+                        try {
+                          const img = args[0];
+
+                          if (!img) return;
+
+                          const width = img.width || args[3];
+                          const height = img.height || args[4];
+
+                          // Si no tiene dimensiones, lo guardamos para intentar más tarde
+                          if (!width || !height) {
+                            if (!drawQueues.has(this)) drawQueues.set(this, []);
+                            drawQueues.get(this).push(args);
+                            return;
+                          }
+
+                          // Evitar loops infinitos
+                          if (drawInProgress.get(this)) return;
+
+                          // Ejecutar los draws pendientes si hay
+                          const queue = drawQueues.get(this);
+                          if (queue && queue.length > 0) {
+                            drawInProgress.set(this, true);
+                            while (queue.length > 0) {
+                              const pendingArgs = queue.shift();
+                              try {
+                                const pendingImg = pendingArgs[0];
+                                const w = pendingImg?.width || pendingArgs[3];
+                                const h = pendingImg?.height || pendingArgs[4];
+                                if (w && h) {
+                                  originalDrawImage.apply(this, pendingArgs);
+                                } else {
+                                  // Si sigue sin estar lista, volver a poner al final
+                                  queue.push(pendingArgs);
+                                }
+                              } catch (e) {
+                                console.warn('🛑 Fallo al procesar draw pendiente:', e);
+                              }
+                            }
+                            drawInProgress.set(this, false);
+                          }
+
+                          // Dibujar la imagen actual
+                          return originalDrawImage.apply(this, args);
+
+                        } catch (err) {
+                          console.warn('🛑 drawImage falló silenciosamente:', err);
+                          return;
+                        }
+                      };
+                  })();
+                  var OriginalWebSocket = window.WebSocket;
+
+                  window.WebSocket = function(url, protocols) {
+                    if(url.endsWith('/_next/webpack-hmr') && window.location.search.includes('_visualui_edit_')) {
+                      url = url.substr(0, url.length - '/_next/webpack-hmr'.length) + '/websocket';
+                    }
+                    var instance = new OriginalWebSocket(url, protocols);
+                    return instance;
+                  };
+
+                  window.WebSocket.prototype = OriginalWebSocket.prototype;
+                }
+              })();
+            </script><link rel="preload" href="/workspace/_next/static/css/17630b30796489e6.css" as="style"/><link rel="stylesheet" href="/workspace/_next/static/css/17630b30796489e6.css" data-n-g=""/><noscript data-n-css=""></noscript><script defer="" nomodule="" src="/workspace/_next/static/chunks/polyfills-42372ed130431b0a.js"></script><script src="/workspace/_next/static/chunks/webpack-8fda0a2aa3cba688.js" defer=""></script><script src="/workspace/_next/static/chunks/framework-ddb69596ef8ba41a.js" defer=""></script><script src="/workspace/_next/static/chunks/main-9d3d3f3fcfc454a4.js" defer=""></script><script src="/workspace/_next/static/chunks/pages/_app-fcc25a325506c569.js" defer=""></script><script src="/workspace/_next/static/chunks/pages/arduinos/%5Barduino%5D-546c6f1d36b9addd.js" defer=""></script><script src="/workspace/_next/static/qKZ52yfmeMho0OK2AIPyt/_buildManifest.js" defer=""></script><script src="/workspace/_next/static/qKZ52yfmeMho0OK2AIPyt/_ssgManifest.js" defer=""></script><style id="react-native-stylesheet">[stylesheet-group="0"]{}
+body{margin:0;}
+button::-moz-focus-inner,input::-moz-focus-inner{border:0;padding:0;}
+html{-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:rgba(0,0,0,0);}
+input::-webkit-search-cancel-button,input::-webkit-search-decoration,input::-webkit-search-results-button,input::-webkit-search-results-decoration{display:none;}
+[stylesheet-group="1"]{}
+.css-11aywtz{-moz-appearance:textfield;-webkit-appearance:none;background-color:rgba(0,0,0,0.00);border-bottom-left-radius:0px;border-bottom-right-radius:0px;border-top-left-radius:0px;border-top-right-radius:0px;border:0 solid black;box-sizing:border-box;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;margin:0px;padding:0px;resize:none;}
+.css-146c3p1{background-color:rgba(0,0,0,0.00);border:0 solid black;box-sizing:border-box;color:rgba(0,0,0,1.00);display:inline;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;list-style:none;margin:0px;padding:0px;position:relative;text-align:start;text-decoration:none;white-space:pre-wrap;word-wrap:break-word;}
+.css-175oi2r{align-items:stretch;background-color:rgba(0,0,0,0.00);border:0 solid black;box-sizing:border-box;display:flex;flex-basis:auto;flex-direction:column;flex-shrink:0;list-style:none;margin:0px;min-height:0px;min-width:0px;padding:0px;position:relative;text-decoration:none;z-index:0;}
+.css-1jxf684{background-color:rgba(0,0,0,0.00);border:0 solid black;box-sizing:border-box;color:inherit;display:inline;font:inherit;list-style:none;margin:0px;padding:0px;position:relative;text-align:inherit;text-decoration:none;white-space:inherit;word-wrap:break-word;}
+.css-9pa8cd{bottom:0px;height:100%;left:0px;opacity:0;position:absolute;right:0px;top:0px;width:100%;z-index:-1;}
+[stylesheet-group="2"]{}
+.r-13awgt0{flex:1;}
+.r-1awa8pu{border-bottom-color:rgba(101,119,134,1.00);border-left-color:rgba(101,119,134,1.00);border-right-color:rgba(101,119,134,1.00);border-top-color:rgba(101,119,134,1.00);}
+.r-1d4xg89{border-bottom-color:rgba(170,184,194,1.00);border-left-color:rgba(170,184,194,1.00);border-right-color:rgba(170,184,194,1.00);border-top-color:rgba(170,184,194,1.00);}
+.r-1j16mh1{border-bottom-left-radius:100%;border-bottom-right-radius:100%;border-top-left-radius:100%;border-top-right-radius:100%;}
+.r-1jkafct{border-bottom-left-radius:2px;border-bottom-right-radius:2px;border-top-left-radius:2px;border-top-right-radius:2px;}
+.r-1jyn79y{border-bottom-color:rgba(0,150,136,1.00);border-left-color:rgba(0,150,136,1.00);border-right-color:rgba(0,150,136,1.00);border-top-color:rgba(0,150,136,1.00);}
+.r-1phboty{border-bottom-style:solid;border-left-style:solid;border-right-style:solid;border-top-style:solid;}
+.r-1udh08x{overflow-x:hidden;overflow-y:hidden;}
+.r-4a18lf{border-bottom-color:rgba(255,0,0,1.00);border-left-color:rgba(255,0,0,1.00);border-right-color:rgba(255,0,0,1.00);border-top-color:rgba(255,0,0,1.00);}
+.r-60ke3l{border-bottom-color:rgba(0,128,0,1.00);border-left-color:rgba(0,128,0,1.00);border-right-color:rgba(0,128,0,1.00);border-top-color:rgba(0,128,0,1.00);}
+.r-9x6qib{border-bottom-color:rgba(204,214,221,1.00);border-left-color:rgba(204,214,221,1.00);border-right-color:rgba(204,214,221,1.00);border-top-color:rgba(204,214,221,1.00);}
+.r-crgep1{margin:0px;}
+.r-d045u9{border-bottom-width:2px;border-left-width:2px;border-right-width:2px;border-top-width:2px;}
+.r-edyy15{padding:8px;}
+.r-fx7oqy{border-bottom-color:rgba(0,0,255,1.00);border-left-color:rgba(0,0,255,1.00);border-right-color:rgba(0,0,255,1.00);border-top-color:rgba(0,0,255,1.00);}
+.r-krxsd3{display:-webkit-box;}
+.r-rs99b7{border-bottom-width:1px;border-left-width:1px;border-right-width:1px;border-top-width:1px;}
+.r-t60dpp{padding:0px;}
+.r-xoduu5{display:inline-flex;}
+.r-ywje51{margin:auto;}
+[stylesheet-group="2.1"]{}
+.r-11gswi8{padding-left:3px;padding-right:3px;}
+.r-1ntr0p{padding-left:5px;padding-right:5px;}
+[stylesheet-group="2.2"]{}
+.r-10s2tm5{left:0%;}
+.r-16o8guy{right:100%;}
+.r-dqe1q{right:0%;}
+.r-rci37q{left:100%;}
+[stylesheet-group="3"]{}
+.r-105ug2t{pointer-events:auto!important;}
+.r-10ptun7{height:16px;}
+.r-10v3vxq{transform:scaleX(-1);}
+.r-10xqauy{padding-top:env(safe-area-inset-top);}
+.r-11j9u27{visibility:hidden;}
+.r-11mpjr4{background-color:rgba(223,223,223,1.00);}
+.r-11udlyb{background-color:rgba(0,150,136,1.00);}
+.r-11yh6sk{overflow-x:hidden;}
+.r-12vffkv>*{pointer-events:auto;}
+.r-12vffkv{pointer-events:none!important;}
+.r-13aq9py{animation-name:r-1iq689l;}
+.r-13qz1uu{width:100%;}
+.r-13tjlyg{transition-duration:0.1s;}
+.r-14lw9ot{background-color:rgba(255,255,255,1.00);}
+.r-14sbq61{background-color:rgba(33,150,243,1.00);}
+.r-150rngu{-webkit-overflow-scrolling:touch;}
+.r-16y2uox{flex-grow:1;}
+.r-173mzie{transform:scaleY(-1);}
+.r-1777fci{justify-content:center;}
+.r-17bb2tj{animation-duration:0.75s;}
+.r-17leim2{background-repeat:repeat;}
+.r-18u37iz{flex-direction:row;}
+.r-19wmn03{width:20px;}
+.r-19z077z{touch-action:none;}
+.r-1abnn5w{animation-play-state:paused;}
+.r-1acpoxo{width:36px;}
+.r-1aiqnjv{font-family:monospace,monospace;}
+.r-1awozwy{align-items:center;}
+.r-1ay1djp{animation-duration:1s;}
+.r-1b43r93{font-size:14px;}
+.r-1c6unfx{forced-color-adjust:none;}
+.r-1d2f490{left:0px;}
+.r-1d5kdc7{flex-direction:column-reverse;}
+.r-1dernwh{height:70%;}
+.r-1ei5mc7{cursor:inherit;}
+.r-1euycsn{flex-direction:row-reverse;}
+.r-1ewcgjf{box-shadow:0px 1px 3px rgba(0,0,0,0.5);}
+.r-1ff274t{text-align:right;}
+.r-1ffj0ar{background-color:rgba(0,0,0,0.40);}
+.r-1i6wzkk{-moz-transition-property:opacity;-webkit-transition-property:opacity;transition-property:opacity;}
+.r-1ielgck{animation-duration:300ms;}
+.r-1iln25a{word-wrap:normal;}
+.r-1janqcz{width:16px;}
+.r-1ldzwu0{animation-timing-function:linear;}
+.r-1loqt21{cursor:pointer;}
+.r-1mlwlqe{flex-basis:auto;}
+.r-1mrlafo{background-position:0;}
+.r-1muvv40{animation-iteration-count:infinite;}
+.r-1niwhzg{background-color:rgba(0,0,0,0.00);}
+.r-1ny4l3l{outline-style:none;}
+.r-1ocf4r9{scroll-snap-type:y mandatory;}
+.r-1otgn73{touch-action:manipulation;}
+.r-1p0dtai{bottom:0px;}
+.r-1pi2tsx{height:100%;}
+.r-1qd0xha{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.r-1qulhi1{animation-name:r-1pzkwqh;}
+.r-1r8g8re{height:36px;}
+.r-1rnoaur{overflow-y:auto;}
+.r-1sg8ghl{z-index:1000;}
+.r-1sxrcry{background-size:auto;}
+.r-1udbk01{text-overflow:ellipsis;}
+.r-1uypc71{animation-timing-function:ease-in;}
+.r-1w6e6rj{flex-wrap:wrap;}
+.r-1wbh5a2{flex-shrink:1;}
+.r-1wyyakw{z-index:-1;}
+.r-1xcajam{position:fixed;}
+.r-1xnzce8{-moz-user-select:text;-webkit-user-select:text;user-select:text;}
+.r-1yef0xd{animation-name:r-11cv4x;}
+.r-2eszeu::-webkit-scrollbar{display:none}
+.r-2eszeu{scrollbar-width:none;}
+.r-30o5oe{-moz-appearance:none;-ms-appearance:none;-webkit-appearance:none;appearance:none;}
+.r-3s2u2q{white-space:nowrap;}
+.r-417010{z-index:0;}
+.r-4gszlv{background-size:cover;}
+.r-4v7adb{height:5px;}
+.r-633pao{pointer-events:none!important;}
+.r-6dt33c{opacity:1;}
+.r-6taxm2:-ms-input-placeholder{color:var(--placeholderTextColor);opacity:1;}
+.r-6taxm2::-moz-placeholder{color:var(--placeholderTextColor);opacity:1;}
+.r-6taxm2::-webkit-input-placeholder{color:var(--placeholderTextColor);opacity:1;}
+.r-6taxm2::placeholder{color:var(--placeholderTextColor);opacity:1;}
+.r-7cikom{font-size:inherit;}
+.r-7q8q6z{cursor:default;}
+.r-8akbws{-webkit-box-orient:vertical;}
+.r-97e31f{padding-bottom:env(safe-area-inset-bottom);}
+.r-agouwx{transform:translateZ(0);}
+.r-ah5dr5>*{pointer-events:none;}
+.r-ah5dr5{pointer-events:auto!important;}
+.r-bi4vy9{transform:translateY(100%);}
+.r-buy8e9{overflow-y:hidden;}
+.r-bv2aro{padding-left:env(safe-area-inset-left);}
+.r-c68hjy{color:rgba(161,161,161,1.00);}
+.r-cpa5s6{scroll-snap-align:start;}
+.r-dkge59{background-color:rgba(170,184,194,1.00);}
+.r-dnmrzs{max-width:100%;}
+.r-eafdt9{transition-duration:0.15s;}
+.r-ebwn4k{animation-name:r-q67da2;}
+.r-ehq7j7{background-size:contain;}
+.r-eqz5dr{flex-direction:column;}
+.r-fdjqy7{text-align:left;}
+.r-g3mlsw{animation-name:r-t2lo5v;}
+.r-ghxds0{transform:translateY(0%);}
+.r-gtdqiz{position:-webkit-sticky;position:sticky;}
+.r-hxflta{padding-right:env(safe-area-inset-right);}
+.r-ipm5af{top:0px;}
+.r-jwli3a{color:rgba(255,255,255,1.00);}
+.r-k200y{align-self:flex-start;}
+.r-lltvgl{overflow-x:auto;}
+.r-lrvibr{-moz-user-select:none;-webkit-user-select:none;user-select:none;}
+.r-majxgm{font-weight:500;}
+.r-mfh4gg{scroll-snap-type:x mandatory;}
+.r-mhe3cw{z-index:10;}
+.r-n6v787{font-size:13px;}
+.r-nvplwv{animation-timing-function:ease-out;}
+.r-orgf3d{opacity:0;}
+.r-q4m81j{text-align:center;}
+.r-rs94m5{background-image:url("data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjxzdmcKICAgeG1sbnM6ZGM9Imh0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvIgogICB4bWxuczpjYz0iaHR0cDovL2NyZWF0aXZlY29tbW9ucy5vcmcvbnMjIgogICB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiCiAgIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICAgdmVyc2lvbj0iMS4xIgogICB2aWV3Qm94PSIwIDAgMSAxIgogICBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJ4TWluWU1pbiBtZWV0Ij4KICA8cGF0aAogICAgIGQ9Ik0gMC4wNDAzODA1OSwwLjYyNjc3NjcgMC4xNDY0NDY2MSwwLjUyMDcxMDY4IDAuNDI5Mjg5MzIsMC44MDM1NTMzOSAwLjMyMzIyMzMsMC45MDk2MTk0MSB6IE0gMC4yMTcxNTcyOSwwLjgwMzU1MzM5IDAuODUzNTUzMzksMC4xNjcxNTcyOSAwLjk1OTYxOTQxLDAuMjczMjIzMyAwLjMyMzIyMzMsMC45MDk2MTk0MSB6IgogICAgIGlkPSJyZWN0Mzc4MCIKICAgICBzdHlsZT0iZmlsbDojZmZmZmZmO2ZpbGwtb3BhY2l0eToxO3N0cm9rZTpub25lIiAvPgo8L3N2Zz4K");}
+.r-sfbmgh{z-index:9999;}
+.r-tsynxw{text-transform:uppercase;}
+.r-u6sd8q{background-repeat:no-repeat;}
+.r-u8s1d{position:absolute;}
+.r-u92y06{background-color:rgba(255,165,0,1.00);}
+.r-van48c{caret-color:transparent;}
+.r-vvn4in{background-position:center;}
+.r-x3cy2q{background-size:100% 100%;}
+.r-xx3c9p{animation-name:r-imtty0;}
+.r-z80fyv{height:20px;}
+.r-zchlnj{right:0px;}
+@-webkit-keyframes r-11cv4x{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
+@-webkit-keyframes r-1iq689l{0%{transform:translateY(0%);}100%{transform:translateY(100%);}}
+@-webkit-keyframes r-1pzkwqh{0%{transform:translateY(100%);}100%{transform:translateY(0%);}}
+@-webkit-keyframes r-imtty0{0%{opacity:0;}100%{opacity:1;}}
+@-webkit-keyframes r-q67da2{0%{transform:translateX(-100%);}100%{transform:translateX(400%);}}
+@-webkit-keyframes r-t2lo5v{0%{opacity:1;}100%{opacity:0;}}
+@keyframes r-11cv4x{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
+@keyframes r-1iq689l{0%{transform:translateY(0%);}100%{transform:translateY(100%);}}
+@keyframes r-1pzkwqh{0%{transform:translateY(100%);}100%{transform:translateY(0%);}}
+@keyframes r-imtty0{0%{opacity:0;}100%{opacity:1;}}
+@keyframes r-q67da2{0%{transform:translateX(-100%);}100%{transform:translateX(400%);}}
+@keyframes r-t2lo5v{0%{opacity:1;}100%{opacity:0;}}</style><link id="tamagui-css" rel="stylesheet" href="/public/themes/adminpanel.css"/><link rel="stylesheet" id="dynamic-fonts-css" href="/api/core/v1/themes/get-fonts-css?v=1770121918392"/><style>@media (max-width: 660px){:root:root ._pr-_xs_1481558214{padding-right:var(--space-7);}}
+@media (max-width: 660px){:root:root ._pl-_xs_1481558214{padding-left:var(--space-7);}}
+:root ._dsp-flex{display:flex;}
+:root ._ai-stretch{align-items:stretch;}
+:root ._fd-column{flex-direction:column;}
+:root ._fb-auto{flex-basis:auto;}
+:root ._bxs-border-box{box-sizing:border-box;}
+:root ._pos-relative{position:relative;}
+:root ._mih-0px{min-height:0px;}
+:root ._miw-0px{min-width:0px;}
+:root ._fs-1{flex-shrink:1;}
+:root ._fg-1{flex-grow:1;}
+:root ._h-100vh{height:100vh;}
+:root ._h-10037{height:100%;}
+:root ._fd-row{flex-direction:row;}
+:root ._fs-0{flex-shrink:0;}
+:root ._pos-fixed{position:fixed;}
+:root ._r-0px{right:0px;}
+:root ._l-0px{left:0px;}
+:root ._ai-center{align-items:center;}
+:root ._jc-center{justify-content:center;}
+:root ._zi-50000{z-index:50000;}
+:root ._w-10037{width:100%;}
+:root ._maw-1120px{max-width:1120px;}
+@media (max-width: 800px){:root:root:root ._btlr-_sm_0px{border-top-left-radius:0px;}}
+@media (max-width: 800px){:root:root:root ._btrr-_sm_0px{border-top-right-radius:0px;}}
+@media (max-width: 800px){:root:root:root ._bbrr-_sm_0px{border-bottom-right-radius:0px;}}
+@media (max-width: 800px){:root:root:root ._bblr-_sm_0px{border-bottom-left-radius:0px;}}
+@media (max-width: 800px){:root:root:root ._transform-_sm_1529299154{transform:translateY(0px);}}
+@media (max-width: 800px){:root:root:root ._pt-_sm_1481558214{padding-top:var(--space-7);}}
+@media (max-width: 800px){:root:root:root ._pb-_sm_1481558214{padding-bottom:var(--space-7);}}
+:root ._bbc-1726194350{border-bottom-color:transparent;}
+:root ._pt-1481558276{padding-top:var(--space-5);}
+:root ._pb-1481558276{padding-bottom:var(--space-5);}
+:root ._ox-hidden{overflow-x:hidden;}
+:root ._oy-hidden{overflow-y:hidden;}
+:root ._contain-paint{contain:paint;}
+:root ._btw-0px{border-top-width:0px;}
+:root ._brw-0px{border-right-width:0px;}
+:root ._bbw-0px{border-bottom-width:0px;}
+:root ._blw-0px{border-left-width:0px;}
+:root ._btc-1726194350{border-top-color:transparent;}
+:root ._brc-1726194350{border-right-color:transparent;}
+:root ._blc-1726194350{border-left-color:transparent;}
+:root ._btlr-1881200719{border-top-left-radius:var(--radius-11);}
+:root ._btrr-1881200719{border-top-right-radius:var(--radius-11);}
+:root ._bbrr-1881200719{border-bottom-right-radius:var(--radius-11);}
+:root ._bblr-1881200719{border-bottom-left-radius:var(--radius-11);}
+:root ._bbs-solid{border-bottom-style:solid;}
+:root ._bts-solid{border-top-style:solid;}
+:root ._bls-solid{border-left-style:solid;}
+:root ._brs-solid{border-right-style:solid;}
+:root ._transform-1529209781{transform:translateY(3px);}
+:root ._pos-absolute{position:absolute;}
+:root ._o-0{opacity:0;}
+:root ._t-0px{top:0px;}
+:root ._b-0px{bottom:0px;}
+@media (min-width: 801px){:root:root:root:root:root:root:root:root:root ._maw-_gtSm_980px{max-width:980px;}}
+@media (min-width: 1021px){:root:root:root:root:root:root:root:root:root:root ._maw-_gtMd_1140px{max-width:1140px;}}
+:root ._mr-auto{margin-right:auto;}
+:root ._ml-auto{margin-left:auto;}
+:root ._pr-1316330145{padding-right:var(--space-11);}
+:root ._pl-1316330145{padding-left:var(--space-11);}
+:root ._jc-441309761{justify-content:space-between;}
+:root ._pr-1481558214{padding-right:var(--space-7);}
+:root ._pl-1481558214{padding-left:var(--space-7);}
+:root ._pt-1481558152{padding-top:var(--space-9);}
+@media (max-width: 660px){:root:root ._pl-_xs_1316330145{padding-left:var(--space-11);}}
+:root ._miw-210px{min-width:210px;}
+:root ._pt-7d0t5px46{padding-top:7.5px;}
+:root ._pb-7d0t5px46{padding-bottom:7.5px;}
+:root ._pr-1481558152{padding-right:var(--space-9);}
+:root ._pl-1481558152{padding-left:var(--space-9);}
+:root ._cur-pointer{cursor:pointer;}
+:root ._mt--20px{margin-top:-20px;}
+:root ._mb--20px{margin-bottom:-20px;}
+@media (max-width: 660px){:root:root ._miw-_xs_130px{min-width:130px;}}
+:root ._miw-160px{min-width:160px;}
+:root ._h-40px{height:40px;}
+:root ._pe-auto{pointer-events:auto !important;}
+:root ._mr-1481558152{margin-right:var(--space-9);}
+:root ._zi--1{z-index:-1;}
+:root ._h-54px{height:54px;}
+:root ._mih-1316330145{min-height:var(--space-11);}
+:root ._miw-1316330145{min-width:var(--space-11);}
+:root ._pe-none{pointer-events:none !important;}
+:root ._w-1316330145{width:var(--space-11);}
+:root ._h-1316330145{height:var(--space-11);}
+:root ._col-675002279{color:var(--color);}
+:root ._tt-230633015{text-transform:var(--f-tr-9);}
+:root ._ff-299667014{font-family:var(--f-fa);}
+:root ._fow-233016295{font-weight:var(--f-we-9);}
+:root ._ls-167744214{letter-spacing:var(--f-21-9);}
+:root ._fos-229441375{font-size:var(--f-si-9);}
+:root ._lh-222976728{line-height:var(--f-li-9);}
+:root ._dsp-inline{display:inline;}
+:root ._ww-break-word{word-wrap:break-word;}
+:root ._whiteSpace-normal{white-space:normal;}
+:root ._mt-0px{margin-top:0px;}
+:root ._mr-0px{margin-right:0px;}
+:root ._mb-0px{margin-bottom:0px;}
+:root ._ml-0px{margin-left:0px;}
+:root ._ussel-auto{user-select:auto;-webkit-user-select:auto;}
+:root ._btc-2122800589{border-top-color:var(--borderColor);}
+:root ._brc-2122800589{border-right-color:var(--borderColor);}
+:root ._bbc-2122800589{border-bottom-color:var(--borderColor);}
+:root ._blc-2122800589{border-left-color:var(--borderColor);}
+:root ._bbw-1px{border-bottom-width:1px;}
+:root ._h-0px{height:0px;}
+:root ._mah-0px{max-height:0px;}
+:root ._pt-1316330300{padding-top:var(--space-16);}
+:root ._transform-d0t1394298074{transform:translateY(-0.5px);}
+@media (max-width: 800px){:root:root:root ._fd-_sm_column{flex-direction:column;}}
+@media (max-width: 800px){:root:root:root ._ai-_sm_center{align-items:center;}}
+:root ._pt-1316330145{padding-top:var(--space-11);}
+:root ._pb-1316330145{padding-bottom:var(--space-11);}
+:root ._ai-flex-start{align-items:flex-start;}
+:root ._pt-1316330238{padding-top:var(--space-14);}
+:root ._pb-1316330238{padding-bottom:var(--space-14);}
+:root ._fg-1d0t546{flex-grow:1.5;}
+:root ._gap-5px{gap:5px;}
+:root ._w-300px{width:300px;}
+:root ._whiteSpace-pre-wrap{white-space:pre-wrap;}
+:root ._fow-200{font-weight:200;}
+:root ._fow-400{font-weight:400;}
+:root ._ai-flex-end{align-items:flex-end;}
+:root ._mt-1316330145{margin-top:var(--space-11);}
+:root ._gap-1316330145{gap:var(--space-11);}
+:root ._pt-1481558214{padding-top:var(--space-7);}
+@media (max-width: 800px){:root:root:root ._jc-_sm_center{justify-content:center;}}
+:root ._fw-wrap{flex-wrap:wrap;}
+:root ._pb-1481558214{padding-bottom:var(--space-7);}
+@media (max-width: 800px){:root:root:root ._ta-_sm_center{text-align:center;}}
+:root ._col-137137640{color:var(--color10);}
+:root ._ta-right{text-align:right;}
+:root ._pe-box-none>*{pointer-events:auto !important;} :root ._pe-box-none{pointer-events:none !important;}
+:root ._maw-10037{max-width:100%;}
+:root ._zi-100000{z-index:100000;}
+:root ._fd-1272730475{flex-direction:column-reverse;}
+:root ._t-1481558214{top:var(--space-7);}</style></head><body><div id="__next"></div><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{}},"page":"/arduinos/[arduino]","query":{},"buildId":"qKZ52yfmeMho0OK2AIPyt","assetPrefix":"/workspace","nextExport":true,"autoExport":true,"isFallback":false,"scriptLoader":[]}</script></body></html>

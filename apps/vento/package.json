@@ -1,0 +1,54 @@
+{
+  "name": "vento",
+  "version": "0.0.1",
+  "sideEffects": false,
+  "source": "src/index.ts",
+  "main": "src/index.ts",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "add-user": "node addUser.js",
+    "dev-full": "FULL_DEV=1 NODE_ENV=development tsx src/index.ts",
+    "dev-standalone": "NODE_ENV=development tsx src/index.ts",
+    "prod-standalone": "NODE_ENV=production tsx src/index.ts",
+    "prepare-dev": "node prepare.js",
+    "package": "node build.js",
+    "clean": "shx rm -f index.js"
+  },
+  "dependencies": {
+    "@my/config": "*",
+    "aedes": "^0.50.0",
+    "app": "*",
+    "archiver": "7.0.1",
+    "axios": "^1.7.7",
+    "better-sqlite3": "12.0.0",
+    "chokidar": "^3.5.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "esbuild": "^0.24.0",
+    "express": "^4.18.2",
+    "http-proxy": "^1.18.1",
+    "jsonwebtoken": "^9.0.2",
+    "mime-types": "^2.1.35",
+    "moment": "2.29.4",
+    "multer": "1.4.5-lts.1",
+    "node-fetch": "^2.6.0",
+    "pino": "9.2.0",
+    "pino-http": "10.2.0",
+    "pino-pretty": "11.2.1",
+    "protobase": "*",
+    "protonode": "*",
+    "shx": "^0.3.4",
+    "tslib": "2.6.2",
+    "tsx": "4.19.3",
+    "typescript": "5.8.2",
+    "zod": "^3.22.2"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
+    "@types/express": "^4.17.17",
+    "@types/node": "20.6.0"
+  }
+}

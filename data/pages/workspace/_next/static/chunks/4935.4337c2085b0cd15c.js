@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[4935],{24935:function(e,i,s){s.r(i);var d=s(52322);i.default=()=>(0,d.jsx)("div",{children:"The 3d Model Viewer is disabled, go to ModelViewer.tsx to enable it."})}}]);

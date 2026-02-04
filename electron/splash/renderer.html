@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Starting Vento...</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script>
+    !function(){try{var d=document.documentElement.classList;d.remove('t_dark');d.remove('t_light');var m=window.matchMedia('(prefers-color-scheme: dark)');d.add(m.matches?'t_dark':'t_light')}catch(e){}}()
+  </script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="data/public/fonts/inter-400.css" />
+  <link rel="stylesheet" href="../../data/themes/default.css" />
+  <!-- Styles -->
+  <style>
+    :root {
+      /* Protofy brand — yellow */
+      --brand-from: var(--green8);
+      --brand-to: var(--green10);
+      /* Warm dark background */
+      --bg-start: #0d0a00;
+      --bg-end: #211600;
+    }
+
+    * {
+      box-sizing: border-box;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', sans-serif;
+      color: var(--color, #fff8e1);
+      font-size: 10px;
+      background-color: var(--bgPanel, rgba(0, 0, 0, 0.8));
+      overflow: hidden;
+    }
+
+    #particles {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    #splash,
+    #logs {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+    }
+
+    #splash {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      background-color: var(--bgContent);
+    }
+
+    #logo {
+      width: 260px;
+      animation: float 6s ease-in-out infinite;
+      margin-bottom: 2.5rem;
+      filter: invert(var(--logo-invert)) !important;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
+    }
+
+    @keyframes float {
+
+      0%,
+      100% {
+        transform: translateY(0);
+      }
+
+      50% {
+        transform: translateY(-8px);
+      }
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 600;
+      background: var(--color11);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: .5px;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    /* Progress bar */
+    #progress {
+      width: 80%;
+      max-width: 360px;
+      height: 4px;
+      background: var(--color8);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    #progress::before {
+      content: '';
+      display: block;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--brand-from), var(--brand-to));
+      animation: progress 2s infinite ease-in-out;
+    }
+
+    @keyframes progress {
+      0% {
+        transform: translateX(-100%);
+      }
+
+      100% {
+        transform: translateX(300%);
+      }
+    }
+
+    #view-logs {
+      position: absolute;
+      bottom: 16px;
+      right: 20px;
+      font-size: 1rem;
+      color: var(--color11, #f7b500);
+      cursor: pointer;
+      transition: color .2s ease;
+    }
+
+    #view-logs:hover {
+      color: var(--color);
+    }
+
+    /* Logs panel */
+    #logs {
+      background: color-mix(in srgb, var(--bgContent, #050505) 92%, transparent);
+      height: 100vh;
+      width: 100vw;
+      display: none;
+      overflow: auto; /* scrolling happens here */
+    }
+
+    /* Sticky header bar inside logs */
+    #logs-bar {
+      position: sticky;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--bgContent);
+      z-index: 5; /* above log content */
+    }
+    #logs-title {
+      color: var(--color11);
+      font-size: 1.6rem;
+      font-family: 'Inter', sans-serif;
+    }
+
+    /* Back button (logs view) */
+    #back-to-splash {
+      font-size: 1.2rem;
+      font-family: 'Inter', sans-serif;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ffffff33;
+      background: var(--green8);
+      color: var(--color);
+      cursor: pointer;
+      transition: transform .08s ease, opacity .2s ease;
+    }
+    #back-to-splash:hover { opacity: .9; }
+    #back-to-splash:active { transform: scale(0.98); }
+
+    /* Floating scroll-to-bottom button */
+    #scroll-to-bottom {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid #ffffff33;
+      background: var(--green8);
+      color: var(--color);
+      font-size: 20px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: transform .1s ease, opacity .2s ease;
+      z-index: 10;
+    }
+    #scroll-to-bottom:hover { opacity: .9; transform: scale(1.05); }
+    #scroll-to-bottom:active { transform: scale(0.95); }
+    #scroll-to-bottom.visible { display: flex; }
+
+    #log {
+      white-space: pre-wrap;
+      color: var(--color, #c7c2a2);
+      border: none;
+      resize: none;
+      padding: 10px;
+      font-size: 15px;
+      font-family: 'Inter', monospace;
+      line-height: 1.4;
+      backdrop-filter: blur(6px);
+    }
+    :root {
+      --logo-invert: 1;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --logo-invert: 0;
+      }
+    }
+
+  </style>
+</head>
+
+<body>
+  <!-- Splash -->
+  <div id="splash">
+    <img style="width: 120px;" id="logo" src="../../data/public/vento-logo.png" alt="Vento logo" draggable="false" />
+    <h1>Booting Vento, grab a coffee…</h1>
+    <div id="progress" aria-label="Loading progress bar"></div>
+    <span id="view-logs">view logs</span>
+  </div>
+
+  <!-- Logs -->
+  <div id="logs">
+    <div id="logs-bar">
+      <button id="back-to-splash" type="button" aria-label="Back to boot screen">🡠</button>
+      <span id="logs-title">Vento Logs</span>
+    </div>
+    <pre id="log" readonly></pre>
+    <button id="scroll-to-bottom" type="button" aria-label="Scroll to bottom">↓</button>
+  </div>
+  <script>
+
+    function simpleAnsiToHtml(text) {
+      // Mapeo de códigos ANSI a estilos CSS
+      const codeStyles = {
+        // atributos
+        1: 'font-weight:bold',
+        4: 'text-decoration:underline',
+
+        // colores de texto (suaves y legibles)
+        30: 'color:#4B4B4B',        // suave gris oscuro
+        31: 'color:#D36A6A',        // rojo rosado
+        32: 'color:#6FB48C',        // verde salvia
+        33: 'color:#D7B46F',        // mostaza suave
+        34: 'color:#6A8ED3',        // azul lavanda
+        35: 'color:#B98ED3',        // violeta pastel
+        36: 'color:#6FD3C1',        // turquesa pastel
+        37: 'color:#EDEDED',        // gris claro casi blanco
+
+        // colores brillantes (versión pastel más clara)
+        90: 'color:#A0A0A0',        // gris suave
+        91: 'color:#E3A1A1',        // coral claro
+        92: 'color:#A8D8B9',        // verde menta
+        93: 'color:#F0E1A1',        // vainilla pastel
+        94: 'color:#A1B8E3',        // azul cielo suave
+        95: 'color:#D9B0E3',        // lila
+        96: 'color:#A1E3DD',        // cian suave
+        97: 'color:#FFFFFF',        // blanco puro
+
+        // fondo (a juego con los tonos de texto)
+        40: 'background-color:#2E2E2E',  // gris oscuro
+        41: 'background-color:#F4D6D6',  // fondo rosado
+        42: 'background-color:#D6F4E0',  // fondo verde muy claro
+        43: 'background-color:#F9F2D6',  // fondo amarillo suave
+        44: 'background-color:#D6E4F4',  // fondo azul suave
+        45: 'background-color:#F0D6F4',  // fondo magenta suave
+        46: 'background-color:#D6F4F2',  // fondo cian suave
+        47: 'background-color:#F7F7F7'   // gris claro casi blanco
+      };
+
+      // dividimos el texto en trozos, manteniendo los códigos ANSI
+      const parts = text.split(/(\x1b\[[0-9;]*m)/);
+      let openSpans = 0;
+      const html = parts.map(part => {
+        const m = part.match(/^\x1b\[([0-9;]*)m$/);
+        if (m) {
+          const codes = m[1].split(';').map(Number).filter(n => !isNaN(n));
+          // si está el código 0 => reset completo
+          if (codes.includes(0)) {
+            const closeTags = '</span>'.repeat(openSpans);
+            openSpans = 0;
+            return closeTags;
+          }
+          // construyo el estilo para este código
+          const styles = codes
+            .map(c => codeStyles[c])
+            .filter(Boolean);
+          if (styles.length) {
+            openSpans++;
+            return `<span style="${styles.join(';')}">`;
+          }
+          return '';
+        } else {
+          // texto normal: escapamos HTML
+          return part
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        }
+      });
+
+      // cerramos cualquier span que quede abierto
+      if (openSpans) html.push('</span>'.repeat(openSpans));
+      return html.join('');
+    }
+
+    /* Simple log viewer switch */
+    const splash = document.getElementById('splash');
+    const logsPanel = document.getElementById('logs');
+    const viewLogs = document.getElementById('view-logs');
+    const logBox = document.getElementById('log');
+    const scrollBtn = document.getElementById('scroll-to-bottom');
+
+    // Auto-scroll state - starts enabled
+    let autoScroll = true;
+
+    // Check if user is near bottom (within 50px)
+    const isNearBottom = () => {
+      const threshold = 50;
+      return logsPanel.scrollHeight - logsPanel.scrollTop - logsPanel.clientHeight < threshold;
+    };
+
+    // Update button visibility
+    const updateScrollButton = () => {
+      if (autoScroll || isNearBottom()) {
+        scrollBtn.classList.remove('visible');
+      } else {
+        scrollBtn.classList.add('visible');
+      }
+    };
+
+    // Handle user scroll
+    logsPanel.addEventListener('scroll', () => {
+      if (isNearBottom()) {
+        // User scrolled back to bottom - re-enable auto-scroll
+        autoScroll = true;
+      } else {
+        // User scrolled up - disable auto-scroll
+        autoScroll = false;
+      }
+      updateScrollButton();
+    });
+
+    // Scroll to bottom button click
+    scrollBtn.addEventListener('click', () => {
+      autoScroll = true;
+      logsPanel.scrollTo({ top: logsPanel.scrollHeight, behavior: 'smooth' });
+      updateScrollButton();
+    });
+
+    const showLogs = () => {
+      splash.style.display = 'none';
+      logsPanel.style.display = 'block';
+      if (autoScroll) {
+        logsPanel.scrollTop = logsPanel.scrollHeight;
+      }
+      updateScrollButton();
+      document.title = 'Vento Logs';
+    };
+
+    const showSplash = () => {
+      logsPanel.style.display = 'none';
+      splash.style.display = 'flex'; // restore flex layout
+      scrollBtn.classList.remove('visible');
+      document.title = 'Starting Vento...';
+    };
+
+    viewLogs.addEventListener('click', showLogs);
+
+    document.getElementById('back-to-splash').addEventListener('click', showSplash);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && logsPanel.style.display !== 'none') showSplash();
+    });
+
+    window.logAPI?.onShowLogs(showLogs);
+
+    /* Pipe logs coming from Electron preload */
+    window.logAPI?.onLog(message => {
+      logBox.innerHTML += simpleAnsiToHtml(message);
+      // Only auto-scroll if enabled
+      if (autoScroll) {
+        logsPanel.scrollTo(0, logsPanel.scrollHeight);
+      }
+      updateScrollButton();
+    });
+  </script>
+</body>
+
+</html>
